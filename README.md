@@ -29,7 +29,6 @@ git clone https://github.com/Fioerd/PDFree.git
 cd PDFree
 
 **Windows**
-```bash
 # 2. Create and activate a virtual environment
 python -m venv .venv
 .venv\Scripts\activate
