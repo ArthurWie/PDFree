@@ -1660,8 +1660,13 @@ class PDFreeApp(QMainWindow):
             )
             if e:
                 m.addAction("Open", lambda: self._open_file(p))
-            m.addAction("Show in Explorer",
-                        lambda: __import__("subprocess").Popen(["explorer", "/select,", p]))
+            import sys as _sys
+            if _sys.platform == "win32":
+                m.addAction("Show in Explorer",
+                            lambda: __import__("subprocess").Popen(["explorer", "/select,", p]))
+            elif _sys.platform == "darwin":
+                m.addAction("Reveal in Finder",
+                            lambda: __import__("subprocess").Popen(["open", "-R", p]))
             fav_now = entry.get("favorited", False)
             m.addAction("Remove from Favorites" if fav_now else "Add to Favorites",
                         lambda: self._toggle_fav(p, not fav_now))

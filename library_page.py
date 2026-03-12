@@ -933,8 +933,13 @@ class _FileTableRow(QFrame):
         menu.exec(pos)
 
     def _show_in_explorer(self):
+        import sys
+        p = str(Path(self._entry["path"]))
         try:
-            subprocess.Popen(["explorer", "/select,", str(Path(self._entry["path"]))])
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", "/select,", p])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", p])
         except Exception:
             pass
 
@@ -1602,9 +1607,12 @@ class LibraryPage(QWidget):
         # OS-level operation. Open the first selected file's folder instead.
         for path in self._selected:
             containing = str(Path(path).parent)
-            import subprocess
+            import subprocess, sys
             try:
-                subprocess.Popen(["explorer", containing])
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", containing])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", containing])
             except Exception:
                 pass
             break
