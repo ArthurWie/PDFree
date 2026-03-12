@@ -16,7 +16,7 @@ More tools (merge, crop, watermark, password, OCR, etc.) are shown in the UI and
 
 ## Requirements
 
-- **Python 3.11 or newer**
+- **Python 3.8 or newer**
 - Packages listed in `requirements.txt`
 
 Tested on **Windows** and **macOS**. Linux should work but is untested.
@@ -27,12 +27,23 @@ Tested on **Windows** and **macOS**. Linux should work but is untested.
 # 1. Clone the repository
 git clone https://github.com/Fioerd/PDFree.git
 cd PDFree
+```
 
 **Windows**
 ```bash
 # 2. Create and activate a virtual environment
 python -m venv .venv
 .venv\Scripts\activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+```
+
+**macOS — quick setup (Python 3.8+ already installed)**
+```bash
+# 2. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
 
 # 3. Install dependencies
 pip install -r requirements.txt
