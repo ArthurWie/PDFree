@@ -14,14 +14,21 @@ A free, open-source PDF toolbox desktop application built with Python and PySide
 
 More tools (merge, crop, watermark, password, OCR, etc.) are shown in the UI and will be added in future releases.
 
-## Requirements
-
-- **Python 3.8 or newer**
-- Packages listed in `requirements.txt`
-
-Tested on **Windows** and **macOS**. Linux should work but is untested.
-
 ## Installation
+
+### Option 1 — Windows .exe (no Python required)
+
+1. Go to the [Releases page](https://github.com/Fioerd/PDFree/releases)
+2. Download `PDFree.exe` from the latest release
+3. Double-click to run — no installation needed
+
+> Windows SmartScreen may show an "Unknown publisher" warning on first launch. Click **More info → Run anyway** to proceed.
+
+---
+
+### Option 2 — Run from source (Windows, macOS, Linux)
+
+**Requirements:** Python 3.8 or newer · Tested on Windows and macOS · Linux should work but is untested
 
 ```bash
 # 1. Clone the repository
