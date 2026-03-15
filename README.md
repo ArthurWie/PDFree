@@ -19,18 +19,41 @@ More tools (merge, crop, watermark, password, OCR, etc.) are shown in the UI and
 ### Option 1 — Pre-built app (no Python required)
 
 **Windows**
-1. Go to the [Releases page](https://github.com/Fioerd/PDFree/releases)
+1. Go to the [Releases page](https://github.com/ArthurWie/PDFree/releases)
 2. Download `PDFree_Setup.exe` from the latest release
 3. Run the installer
 
-> Windows SmartScreen may show an "Unknown publisher" warning on first launch. Click **More info → Run anyway** to proceed.
+> **Windows SmartScreen warning** — Because PDFree is not code-signed, Windows may show a blue "Windows protected your PC" dialog.
+> 1. Click **More info**
+> 2. Click **Run anyway**
+>
+> This is expected for open-source apps without a paid code-signing certificate. The source code is fully available for review.
 
 **macOS**
-1. Go to the [Releases page](https://github.com/Fioerd/PDFree/releases)
+1. Go to the [Releases page](https://github.com/ArthurWie/PDFree/releases)
 2. Download `PDFree.dmg` from the latest release
 3. Open the `.dmg` and drag **PDFree.app** to your Applications folder
+4. On first launch, macOS Gatekeeper will block the app with *"PDFree cannot be opened because it is from an unidentified developer"*
 
-> Gatekeeper may block the app on first launch because it is not notarized. Right-click (or Control-click) the app → **Open** → **Open** to allow it.
+> **macOS Gatekeeper warning** — PDFree is not notarized (Apple charges $99/year for this). To open it:
+>
+> **Option A — Right-click method (easiest)**
+> 1. In Finder, right-click (or Control-click) **PDFree.app**
+> 2. Select **Open** from the context menu
+> 3. Click **Open** in the dialog that appears
+> — You only need to do this once; future launches work normally.
+>
+> **Option B — System Settings**
+> 1. Try to open PDFree normally (it will be blocked)
+> 2. Open **System Settings → Privacy & Security**
+> 3. Scroll down to the Security section — you'll see *"PDFree was blocked"*
+> 4. Click **Open Anyway**
+>
+> **Option C — Terminal (one command)**
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/PDFree.app
+> ```
+> Then open PDFree normally.
 
 ---
 
@@ -40,7 +63,7 @@ More tools (merge, crop, watermark, password, OCR, etc.) are shown in the UI and
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Fioerd/PDFree.git
+git clone https://github.com/ArthurWie/PDFree.git
 cd PDFree
 ```
 
