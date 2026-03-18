@@ -3,3 +3,7 @@ pymupdf>=1.24
 pypdf>=4.0
 Pillow>=10.0
 pdfplumber>=0.11.0
+pdf2docx>=0.5.6
+ocrmypdf>=16.0
+openpyxl>=3.1
+pytest>=8.0

@@ -21,7 +21,6 @@ All original features preserved:
   - Cleanup method
 """
 
-import io
 import math
 import os
 import subprocess
@@ -30,25 +29,67 @@ from enum import Enum
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QSlider, QSizePolicy, QFrame,
-    QTabWidget, QDialog, QDialogButtonBox, QInputDialog,
-    QFileDialog, QMessageBox, QApplication, QCheckBox, QComboBox,
-    QTextEdit, QSplitter, QStackedWidget, QGridLayout, QColorDialog,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QLineEdit,
+    QScrollArea,
+    QSlider,
+    QFrame,
+    QDialog,
+    QInputDialog,
+    QFileDialog,
+    QMessageBox,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QTextEdit,
+    QSplitter,
+    QStackedWidget,
+    QGridLayout,
+    QColorDialog,
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QPointF, QRectF, QSize, QEvent, QObject,
-    QByteArray, QBuffer,
+    Qt,
+    QTimer,
+    QPointF,
+    QRectF,
+    QSize,
+    QEvent,
+    QObject,
+    QByteArray,
+    QBuffer,
 )
 from PySide6.QtGui import (
-    QPainter, QColor, QPen, QBrush, QPainterPath, QImage, QPixmap,
-    QKeySequence, QShortcut, QFont, QFontMetrics, QCursor, QIcon,
+    QPainter,
+    QColor,
+    QPen,
+    QBrush,
+    QPainterPath,
+    QImage,
+    QPixmap,
+    QKeySequence,
+    QShortcut,
+    QFont,
+    QCursor,
+    QIcon,
 )
 from icons import svg_pixmap, svg_icon
 from colors import (
-    BLUE, BLUE_HOVER, GREEN, ORANGE, YELLOW_HL, RED,
-    G50, G100, G200, G300, G400, G500, G600, G700, G800, G900,
-    WHITE, THUMB_BG,
+    BLUE,
+    BLUE_HOVER,
+    GREEN,
+    G50,
+    G100,
+    G200,
+    G300,
+    G400,
+    G500,
+    G700,
+    G900,
+    WHITE,
 )
 from utils import _fitz_pix_to_qpixmap, _make_back_button
 
@@ -60,11 +101,11 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Colors (view_tool-specific overrides / additions)
 # ---------------------------------------------------------------------------
-TOOL_ACTIVE    = "#DBEAFE"
-TOOL_BORDER    = "#93C5FD"
-SIDEBAR_BG     = "#E2E6EC"
+TOOL_ACTIVE = "#DBEAFE"
+TOOL_BORDER = "#93C5FD"
+SIDEBAR_BG = "#E2E6EC"
 SIDEBAR_BORDER = "#C8CDD5"
-TAB_BG         = "#EDF0F4"
+TAB_BG = "#EDF0F4"
 
 # Selection highlight (Windows-style soft blue: #0078D4 @ ~40% opacity)
 SEL_BLUE_R, SEL_BLUE_G, SEL_BLUE_B = 0, 120, 212
@@ -72,12 +113,12 @@ SEL_ALPHA = 102
 
 # Annotation preset colors  (display_name, hex, fitz_rgb)
 ANNOT_COLORS = [
-    ("Yellow",  "#FBBF24", (1.0, 0.75, 0.14)),
-    ("Red",     "#EF4444", (0.94, 0.27, 0.27)),
-    ("Blue",    "#3B82F6", (0.23, 0.51, 0.96)),
-    ("Green",   "#22C55E", (0.13, 0.77, 0.37)),
-    ("Orange",  "#F97316", (0.98, 0.45, 0.09)),
-    ("Black",   "#111827", (0.07, 0.09, 0.15)),
+    ("Yellow", "#FBBF24", (1.0, 0.75, 0.14)),
+    ("Red", "#EF4444", (0.94, 0.27, 0.27)),
+    ("Blue", "#3B82F6", (0.23, 0.51, 0.96)),
+    ("Green", "#22C55E", (0.13, 0.77, 0.37)),
+    ("Orange", "#F97316", (0.98, 0.45, 0.09)),
+    ("Black", "#111827", (0.07, 0.09, 0.15)),
 ]
 
 
@@ -85,47 +126,48 @@ ANNOT_COLORS = [
 # Tool Enum
 # ---------------------------------------------------------------------------
 class Tool(Enum):
-    VIEW          = "view"
-    SELECT        = "select"
-    HIGHLIGHT     = "highlight"
-    UNDERLINE     = "underline"
+    VIEW = "view"
+    SELECT = "select"
+    HIGHLIGHT = "highlight"
+    UNDERLINE = "underline"
     STRIKETHROUGH = "strikethrough"
-    FREEHAND      = "freehand"
-    TEXT_BOX      = "textbox"
-    STICKY_NOTE   = "note"
-    RECT          = "rect"
-    CIRCLE        = "circle"
-    LINE          = "line"
-    ARROW         = "arrow"
-    SIGN          = "sign"
-    EXCERTER      = "excerter"
+    FREEHAND = "freehand"
+    TEXT_BOX = "textbox"
+    STICKY_NOTE = "note"
+    RECT = "rect"
+    CIRCLE = "circle"
+    LINE = "line"
+    ARROW = "arrow"
+    SIGN = "sign"
+    EXCERTER = "excerter"
 
 
 # (tool, icon, label, shortcut_key)
 TOOL_DEFS = [
-    (Tool.SELECT,        "\u270f",     "Select",    "S"),
-    (Tool.HIGHLIGHT,     "\U0001f58d", "Highlight", "H"),
-    (Tool.UNDERLINE,     "_",          "Underline", "U"),
-    (Tool.STRIKETHROUGH, "\u2014",     "Strikeout", "K"),
-    (Tool.TEXT_BOX,      "T",          "Text Box",  "X"),
-    (Tool.STICKY_NOTE,   "\U0001f4ac", "Note",      "N"),
-    (Tool.FREEHAND,      "\u270d",     "Freehand",  "D"),
-    (Tool.RECT,          "\u25a1",     "Rectangle", "R"),
-    (Tool.CIRCLE,        "\u25cb",     "Circle",    "O"),
-    (Tool.LINE,          "/",          "Line",      "L"),
-    (Tool.ARROW,         "\u2192",     "Arrow",     "A"),
-    (Tool.SIGN,          "\u2712",     "Sign",      ""),
-    (Tool.EXCERTER,      "\u2702",     "Excerter",  "E"),
+    (Tool.SELECT, "\u270f", "Select", "S"),
+    (Tool.HIGHLIGHT, "\U0001f58d", "Highlight", "H"),
+    (Tool.UNDERLINE, "_", "Underline", "U"),
+    (Tool.STRIKETHROUGH, "\u2014", "Strikeout", "K"),
+    (Tool.TEXT_BOX, "T", "Text Box", "X"),
+    (Tool.STICKY_NOTE, "\U0001f4ac", "Note", "N"),
+    (Tool.FREEHAND, "\u270d", "Freehand", "D"),
+    (Tool.RECT, "\u25a1", "Rectangle", "R"),
+    (Tool.CIRCLE, "\u25cb", "Circle", "O"),
+    (Tool.LINE, "/", "Line", "L"),
+    (Tool.ARROW, "\u2192", "Arrow", "A"),
+    (Tool.SIGN, "\u2712", "Sign", ""),
+    (Tool.EXCERTER, "\u2702", "Excerter", "E"),
 ]
 
-FIT_PAGE  = -1.0
+FIT_PAGE = -1.0
 FIT_WIDTH = -2.0
-MAX_UNDO  = 30
+MAX_UNDO = 30
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _catmull_rom_segment(p0, p1, p2, p3, num_pts=6):
     """Catmull-Rom spline interpolation between p1 and p2."""
@@ -134,14 +176,18 @@ def _catmull_rom_segment(p0, p1, p2, p3, num_pts=6):
         t = i / num_pts
         t2 = t * t
         t3 = t2 * t
-        x = 0.5 * ((2 * p1[0]) +
-            (-p0[0] + p2[0]) * t +
-            (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
-            (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3)
-        y = 0.5 * ((2 * p1[1]) +
-            (-p0[1] + p2[1]) * t +
-            (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
-            (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
+        x = 0.5 * (
+            (2 * p1[0])
+            + (-p0[0] + p2[0]) * t
+            + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
+            + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3
+        )
+        y = 0.5 * (
+            (2 * p1[1])
+            + (-p0[1] + p2[1]) * t
+            + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
+            + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
+        )
         result.append((x, y))
     return result
 
@@ -165,6 +211,7 @@ def _smooth_stroke(points, num_interp=6):
 # ---------------------------------------------------------------------------
 # Signature Dialog
 # ---------------------------------------------------------------------------
+
 
 class _SigCanvas(QWidget):
     """Inner drawing canvas for the signature dialog."""
@@ -196,8 +243,13 @@ class _SigCanvas(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(WHITE))
-        pen = QPen(QColor(G900), 2, Qt.PenStyle.SolidLine,
-                   Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        pen = QPen(
+            QColor(G900),
+            2,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap,
+            Qt.PenJoinStyle.RoundJoin,
+        )
         p.setPen(pen)
         for stroke in self._strokes:
             if len(stroke) >= 2:
@@ -224,8 +276,13 @@ class _SigCanvas(QWidget):
         img.fill(Qt.GlobalColor.transparent)
         p = QPainter(img)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(G900), 2, Qt.PenStyle.SolidLine,
-                   Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        pen = QPen(
+            QColor(G900),
+            2,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap,
+            Qt.PenJoinStyle.RoundJoin,
+        )
         p.setPen(pen)
         for stroke in self._strokes:
             if len(stroke) >= 2:
@@ -274,7 +331,8 @@ class SignatureDialog(QDialog):
         clear_btn.setStyleSheet(
             f"QPushButton {{ background: {G400}; color: {WHITE}; border-radius: 6px; "
             f"font: 12px 'Segoe UI'; padding: 0 16px; }}"
-            f"QPushButton:hover {{ background: {G500}; }}")
+            f"QPushButton:hover {{ background: {G500}; }}"
+        )
         clear_btn.clicked.connect(self._sig_canvas.clear)
 
         apply_btn = QPushButton("Apply")
@@ -282,7 +340,8 @@ class SignatureDialog(QDialog):
         apply_btn.setStyleSheet(
             f"QPushButton {{ background: {BLUE}; color: {WHITE}; border-radius: 6px; "
             f"font: 12px 'Segoe UI'; font-weight: bold; padding: 0 16px; }}"
-            f"QPushButton:hover {{ background: {BLUE_HOVER}; }}")
+            f"QPushButton:hover {{ background: {BLUE_HOVER}; }}"
+        )
         apply_btn.clicked.connect(self._on_apply)
 
         cancel_btn = QPushButton("Cancel")
@@ -290,7 +349,8 @@ class SignatureDialog(QDialog):
         cancel_btn.setStyleSheet(
             f"QPushButton {{ background: {WHITE}; color: {G700}; border: 1px solid {G300}; "
             f"border-radius: 6px; font: 12px 'Segoe UI'; padding: 0 16px; }}"
-            f"QPushButton:hover {{ background: {G100}; }}")
+            f"QPushButton:hover {{ background: {G100}; }}"
+        )
         cancel_btn.clicked.connect(self.reject)
 
         btn_row.addStretch()
@@ -315,6 +375,7 @@ class SignatureDialog(QDialog):
 # ---------------------------------------------------------------------------
 # PDF Canvas Widget
 # ---------------------------------------------------------------------------
+
 
 class PDFCanvas(QWidget):
     """Inner widget inside QScrollArea that renders the PDF page + overlays."""
@@ -345,8 +406,9 @@ class PDFCanvas(QWidget):
         if self._pixmap is None:
             p.setPen(QColor(G400))
             p.setFont(QFont("Segoe UI", 16))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Open a PDF to start viewing")
+            p.drawText(
+                self.rect(), Qt.AlignmentFlag.AlignCenter, "Open a PDF to start viewing"
+            )
             return
 
         ox = int(vt._page_ox)
@@ -358,8 +420,7 @@ class PDFCanvas(QWidget):
         # Page border
         pen = QPen(QColor(G300), 1)
         p.setPen(pen)
-        p.drawRect(ox - 1, oy - 1,
-                   self._pixmap.width() + 1, self._pixmap.height() + 1)
+        p.drawRect(ox - 1, oy - 1, self._pixmap.width() + 1, self._pixmap.height() + 1)
 
         # --- Search highlights ---
         if vt._search_flat and vt.doc:
@@ -367,11 +428,11 @@ class PDFCanvas(QWidget):
                 if pg != vt.current_page:
                     continue
                 x0, y0, x1, y1 = vt._pdf_rect_to_canvas(rect)
-                is_current = (idx == vt._search_idx)
+                is_current = idx == vt._search_idx
                 if is_current:
-                    fill = QColor(249, 115, 22, 180)   # orange
+                    fill = QColor(249, 115, 22, 180)  # orange
                 else:
-                    fill = QColor(253, 224, 71, 140)   # yellow
+                    fill = QColor(253, 224, 71, 140)  # yellow
                 p.fillRect(QRectF(x0, y0, x1 - x0, y1 - y0), fill)
 
         # --- Text selection ---
@@ -386,8 +447,10 @@ class PDFCanvas(QWidget):
                     line_rects[key] = [w[0], w[1], w[2], w[3]]
                 else:
                     e = line_rects[key]
-                    e[0] = min(e[0], w[0]); e[1] = min(e[1], w[1])
-                    e[2] = max(e[2], w[2]); e[3] = max(e[3], w[3])
+                    e[0] = min(e[0], w[0])
+                    e[1] = min(e[1], w[1])
+                    e[2] = max(e[2], w[2])
+                    e[3] = max(e[3], w[3])
             sel_path = QPainterPath()
             for bbox in line_rects.values():
                 cx0, cy0, cx1, cy1 = vt._pdf_rect_to_canvas(fitz.Rect(*bbox))
@@ -399,8 +462,10 @@ class PDFCanvas(QWidget):
         if vt._rb_start is not None and vt._rb_current is not None:
             sx, sy = vt._rb_start
             cx2, cy2 = vt._rb_current
-            rx = int(min(sx, cx2));  ry = int(min(sy, cy2))
-            rw = int(abs(cx2 - sx)); rh = int(abs(cy2 - sy))
+            rx = int(min(sx, cx2))
+            ry = int(min(sy, cy2))
+            rw = int(abs(cx2 - sx))
+            rh = int(abs(cy2 - sy))
             p.fillRect(QRectF(rx, ry, rw, rh), QColor(59, 130, 246, 20))
             p.setPen(QPen(QColor("#3B82F6"), 2, Qt.PenStyle.DashLine))
             p.setBrush(Qt.BrushStyle.NoBrush)
@@ -410,8 +475,12 @@ class PDFCanvas(QWidget):
             p.setBrush(QBrush(QColor("#FFFFFF")))
             x0c, y0c = rx, ry
             x1c, y1c = rx + rw, ry + rh
-            for hx, hy in [(x0c-6, y0c-6), (x1c-6, y0c-6),
-                           (x0c-6, y1c-6), (x1c-6, y1c-6)]:
+            for hx, hy in [
+                (x0c - 6, y0c - 6),
+                (x1c - 6, y0c - 6),
+                (x0c - 6, y1c - 6),
+                (x1c - 6, y1c - 6),
+            ]:
                 p.drawEllipse(QRectF(hx, hy, 12, 12))
             p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
@@ -430,14 +499,18 @@ class PDFCanvas(QWidget):
         """Draw in-progress annotation shape during drag."""
         if vt._tool == Tool.FREEHAND and len(vt._freehand_pts) >= 2:
             _, hex_c, _ = vt._annot_color
-            pen = QPen(QColor(hex_c), vt._stroke_width,
-                       Qt.PenStyle.SolidLine,
-                       Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            pen = QPen(
+                QColor(hex_c),
+                vt._stroke_width,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
             p.setPen(pen)
             pts = vt._freehand_pts
             for i in range(len(pts) - 1):
                 c0 = vt._pdf_to_canvas(pts[i][0], pts[i][1])
-                c1 = vt._pdf_to_canvas(pts[i+1][0], pts[i+1][1])
+                c1 = vt._pdf_to_canvas(pts[i + 1][0], pts[i + 1][1])
                 p.drawLine(QPointF(c0[0], c0[1]), QPointF(c1[0], c1[1]))
             return
 
@@ -467,30 +540,37 @@ class PDFCanvas(QWidget):
             ey = sy + dy
 
             _, hex_c, _ = vt._annot_color
-            pen = QPen(QColor(hex_c), vt._stroke_width,
-                       Qt.PenStyle.SolidLine,
-                       Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            pen = QPen(
+                QColor(hex_c),
+                vt._stroke_width,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
 
             if vt._tool == Tool.RECT:
-                p.drawRect(QRectF(min(sx, ex), min(sy, ey),
-                                  abs(ex - sx), abs(ey - sy)))
+                p.drawRect(QRectF(min(sx, ex), min(sy, ey), abs(ex - sx), abs(ey - sy)))
             elif vt._tool == Tool.CIRCLE:
-                p.drawEllipse(QRectF(min(sx, ex), min(sy, ey),
-                                     abs(ex - sx), abs(ey - sy)))
+                p.drawEllipse(
+                    QRectF(min(sx, ex), min(sy, ey), abs(ex - sx), abs(ey - sy))
+                )
             elif vt._tool in (Tool.LINE, Tool.ARROW):
                 p.drawLine(QPointF(sx, sy), QPointF(ex, ey))
                 if vt._tool == Tool.ARROW:
-                    self._paint_arrowhead(p, sx, sy, ex, ey,
-                                          size=max(8, vt._stroke_width * 4))
+                    self._paint_arrowhead(
+                        p, sx, sy, ex, ey, size=max(8, vt._stroke_width * 4)
+                    )
 
     def _paint_arrowhead(self, p, x1, y1, x2, y2, size=10):
         angle = math.atan2(y2 - y1, x2 - x1)
-        ap1 = QPointF(x2 - size * math.cos(angle - 0.4),
-                      y2 - size * math.sin(angle - 0.4))
-        ap2 = QPointF(x2 - size * math.cos(angle + 0.4),
-                      y2 - size * math.sin(angle + 0.4))
+        ap1 = QPointF(
+            x2 - size * math.cos(angle - 0.4), y2 - size * math.sin(angle - 0.4)
+        )
+        ap2 = QPointF(
+            x2 - size * math.cos(angle + 0.4), y2 - size * math.sin(angle + 0.4)
+        )
         path = QPainterPath()
         path.moveTo(x2, y2)
         path.lineTo(ap1)
@@ -580,6 +660,7 @@ class PDFCanvas(QWidget):
 # Recent-color swatch – shows delete button on hover
 # ---------------------------------------------------------------------------
 
+
 class _RecentSwatch(QWidget):
     """A 26×26 colored swatch that reveals a ✕ delete button on hover."""
 
@@ -622,6 +703,7 @@ class _RecentSwatch(QWidget):
 # Viewport event filter – detects resize for FIT_PAGE / FIT_WIDTH re-render
 # ---------------------------------------------------------------------------
 
+
 class _ViewportFilter(QObject):
     def __init__(self, view_tool):
         super().__init__()
@@ -639,11 +721,12 @@ class _ViewportFilter(QObject):
 # Main ViewTool widget
 # ---------------------------------------------------------------------------
 
+
 class ViewTool(QWidget):
-    THUMB_W   = 80
+    THUMB_W = 80
     ZOOM_STEP = 0.25
-    ZOOM_MIN  = 0.25
-    ZOOM_MAX  = 5.0
+    ZOOM_MIN = 0.25
+    ZOOM_MAX = 5.0
     SIDEBAR_W = 256
 
     def __init__(self, parent=None, initial_path: str = "", back_callback=None):
@@ -652,62 +735,61 @@ class ViewTool(QWidget):
 
         if fitz is None:
             lay = QVBoxLayout(self)
-            lbl = QLabel(
-                "\u26a0  Missing dependencies.\n\npip install pymupdf")
+            lbl = QLabel("\u26a0  Missing dependencies.\n\npip install pymupdf")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {G500}; font: 16px 'Segoe UI';")
             lay.addWidget(lbl)
             return
 
         # -- Document state --
-        self.pdf_path     = ""
-        self.doc          = None
-        self.total_pages  = 0
+        self.pdf_path = ""
+        self.doc = None
+        self.total_pages = 0
         self.current_page = 0
-        self._modified    = False
+        self._modified = False
 
         # -- View state --
-        self.zoom         = FIT_PAGE
-        self._rotation    = 0
+        self.zoom = FIT_PAGE
+        self._rotation = 0
         self._thumb_imgs: list = []
         self._highlighted_thumb_frame = None
         self._thumb_render_next = 0
         self._thumb_timer = None
 
         # -- Coordinate mapping (set during render) --
-        self._page_ox    = 0.0
-        self._page_oy    = 0.0
+        self._page_ox = 0.0
+        self._page_oy = 0.0
         self._render_mat = fitz.Matrix(1, 1) if fitz else None
-        self._inv_mat    = fitz.Matrix(1, 1) if fitz else None
+        self._inv_mat = fitz.Matrix(1, 1) if fitz else None
 
         # -- Tool state --
-        self._tool           = Tool.VIEW
+        self._tool = Tool.VIEW
         self._annot_color_idx = 0
-        self._stroke_width   = 2
-        self._drag_start     = None   # (canvas_x, canvas_y)
-        self._drag_current   = None   # (canvas_x, canvas_y)
+        self._stroke_width = 2
+        self._drag_start = None  # (canvas_x, canvas_y)
+        self._drag_current = None  # (canvas_x, canvas_y)
         self._freehand_pts: list[tuple] = []
         self._selected_words: list = []
         self._selection_text = ""
-        self._shift_held     = False
-        self._custom_color   = None   # (name, hex, fitz_rgb) or None
+        self._shift_held = False
+        self._custom_color = None  # (name, hex, fitz_rgb) or None
         self._recent_colors: list[str] = []  # hex strings, newest first
 
         # -- Excerter state --
-        self._excerpts: list = []          # list of {path, page, rect, thumb, label}
+        self._excerpts: list = []  # list of {path, page, rect, thumb, label}
         self._excerpt_out = fitz.Document() if fitz else None  # accumulating output
-        self._excerpt_y_cursor  = 0.0
-        self._excerpt_has_page  = False
+        self._excerpt_y_cursor = 0.0
+        self._excerpt_has_page = False
         self._excerpt_flash_rect: tuple | None = None  # (x, y, w, h) canvas coords
-        self._rb_start:   tuple | None = None   # rubber-band start (canvas)
-        self._rb_current: tuple | None = None   # rubber-band current (canvas)
-        self._page_iw: float = 0.0              # rendered page width  (canvas px)
-        self._page_ih: float = 0.0              # rendered page height (canvas px)
+        self._rb_start: tuple | None = None  # rubber-band start (canvas)
+        self._rb_current: tuple | None = None  # rubber-band current (canvas)
+        self._page_iw: float = 0.0  # rendered page width  (canvas px)
+        self._page_ih: float = 0.0  # rendered page height (canvas px)
 
         # -- Search state --
         self._search_results: list[tuple] = []
-        self._search_flat: list[tuple]    = []
-        self._search_idx   = -1
+        self._search_flat: list[tuple] = []
+        self._search_idx = -1
         self._search_visible = False
 
         # -- Form widget overlays --
@@ -751,7 +833,9 @@ class ViewTool(QWidget):
         left_lay.setSpacing(8)
 
         if self._back_callback:
-            back_btn = _make_back_button("Back to Home", self._back_callback, color=G500)
+            back_btn = _make_back_button(
+                "Back to Home", self._back_callback, color=G500
+            )
             left_lay.addWidget(back_btn)
             bk_div = QFrame()
             bk_div.setFixedSize(1, 24)
@@ -783,7 +867,9 @@ class ViewTool(QWidget):
 
         left_lay.addSpacing(8)
 
-        add_btn = _hbtn("+ Add PDF", bg=GREEN, hover="#15803D", fg=WHITE, border=GREEN, bold=True)
+        add_btn = _hbtn(
+            "+ Add PDF", bg=GREEN, hover="#15803D", fg=WHITE, border=GREEN, bold=True
+        )
         add_btn.clicked.connect(self._add_pdf)
         left_lay.addWidget(add_btn)
 
@@ -919,14 +1005,14 @@ class ViewTool(QWidget):
         # -- Body: splitter (sidebar | canvas) -------------------------
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(1)
-        splitter.setStyleSheet("QSplitter::handle { background: " + SIDEBAR_BORDER + "; }")
+        splitter.setStyleSheet(
+            "QSplitter::handle { background: " + SIDEBAR_BORDER + "; }"
+        )
 
         # -- Sidebar (Figma: 256px, white, border-right) ---------------
         sidebar = QWidget()
         sidebar.setFixedWidth(self.SIDEBAR_W)
-        sidebar.setStyleSheet(
-            f"background: {WHITE}; border-right: 1px solid {G200};"
-        )
+        sidebar.setStyleSheet(f"background: {WHITE}; border-right: 1px solid {G200};")
         self._sidebar = sidebar
         sb_lay = QVBoxLayout(sidebar)
         sb_lay.setContentsMargins(0, 0, 0, 0)
@@ -943,9 +1029,11 @@ class ViewTool(QWidget):
         self._thumb_scroll = QScrollArea()
         self._thumb_scroll.setWidgetResizable(True)
         self._thumb_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self._thumb_scroll.setStyleSheet(
-            f"QScrollArea {{ background: {WHITE}; border: none; }}")
+            f"QScrollArea {{ background: {WHITE}; border: none; }}"
+        )
         self._thumb_container = QWidget()
         self._thumb_container.setStyleSheet(f"background: {WHITE};")
         self._thumb_layout = QVBoxLayout(self._thumb_container)
@@ -954,7 +1042,7 @@ class ViewTool(QWidget):
         self._thumb_layout.addStretch()
         self._thumb_scroll.setWidget(self._thumb_container)
         pages_lay.addWidget(self._thumb_scroll)
-        self._sidebar_stack.addWidget(pages_w)   # index 0
+        self._sidebar_stack.addWidget(pages_w)  # index 0
 
         # -- TOC panel (contains both PDF TOC and Excerpts section) -------
         toc_w = QWidget()
@@ -966,9 +1054,11 @@ class ViewTool(QWidget):
         self._toc_scroll = QScrollArea()
         self._toc_scroll.setWidgetResizable(True)
         self._toc_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self._toc_scroll.setStyleSheet(
-            f"QScrollArea {{ background: {WHITE}; border: none; }}")
+            f"QScrollArea {{ background: {WHITE}; border: none; }}"
+        )
         self._toc_container = QWidget()
         self._toc_container.setStyleSheet(f"background: {WHITE};")
         self._toc_layout = QVBoxLayout(self._toc_container)
@@ -991,7 +1081,7 @@ class ViewTool(QWidget):
 
         # Excerpts section (bottom half)
         self._build_excerpts_tab(toc_lay)
-        self._sidebar_stack.addWidget(toc_w)     # index 1
+        self._sidebar_stack.addWidget(toc_w)  # index 1
 
         # -- Tools panel -----------------------------------------------
         tools_w = QWidget()
@@ -999,7 +1089,7 @@ class ViewTool(QWidget):
         tools_lay_outer.setContentsMargins(0, 0, 0, 0)
         tools_lay_outer.setSpacing(0)
         self._build_tools_tab(tools_lay_outer)
-        self._sidebar_stack.addWidget(tools_w)   # index 2
+        self._sidebar_stack.addWidget(tools_w)  # index 2
 
         sb_lay.addWidget(self._sidebar_stack, 1)
         # Start on Tools tab
@@ -1019,7 +1109,8 @@ class ViewTool(QWidget):
         self._scroll_area.setWidgetResizable(False)
         self._scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._scroll_area.setStyleSheet(
-            f"QScrollArea {{ background: {G50}; border: none; }}")
+            f"QScrollArea {{ background: {G50}; border: none; }}"
+        )
 
         self._canvas = PDFCanvas(self)
         self._scroll_area.setWidget(self._canvas)
@@ -1030,7 +1121,8 @@ class ViewTool(QWidget):
         self._search_bar = QWidget()
         self._search_bar.setFixedHeight(44)
         self._search_bar.setStyleSheet(
-            f"background: {G100}; border-top: 1px solid {G200};")
+            f"background: {G100}; border-top: 1px solid {G200};"
+        )
         sb2 = QHBoxLayout(self._search_bar)
         sb2.setContentsMargins(12, 6, 12, 6)
         sb2.setSpacing(4)
@@ -1038,7 +1130,9 @@ class ViewTool(QWidget):
         sb2.addStretch()
 
         srch_icon = QLabel("\U0001f50d")
-        srch_icon.setStyleSheet(f"color: {G500}; background: transparent; border: none;")
+        srch_icon.setStyleSheet(
+            f"color: {G500}; background: transparent; border: none;"
+        )
         sb2.addWidget(srch_icon)
 
         self._search_entry = QLineEdit()
@@ -1046,7 +1140,8 @@ class ViewTool(QWidget):
         self._search_entry.setPlaceholderText("Search\u2026")
         self._search_entry.setStyleSheet(
             f"QLineEdit {{ background: {WHITE}; border: 1px solid {G300}; "
-            f"border-radius: 5px; color: {G900}; font: 12px 'Segoe UI'; padding: 0 6px; }}")
+            f"border-radius: 5px; color: {G900}; font: 12px 'Segoe UI'; padding: 0 6px; }}"
+        )
         self._search_entry.returnPressed.connect(self._do_search)
         sb2.addWidget(self._search_entry)
 
@@ -1062,7 +1157,8 @@ class ViewTool(QWidget):
         self._search_count_lbl.setFixedWidth(80)
         self._search_count_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._search_count_lbl.setStyleSheet(
-            f"color: {G500}; font: 11px 'Segoe UI'; background: transparent; border: none;")
+            f"color: {G500}; font: 11px 'Segoe UI'; background: transparent; border: none;"
+        )
         sb2.addWidget(self._search_count_lbl)
 
         close_s_btn = self._small_btn("\u2715")
@@ -1208,7 +1304,8 @@ class ViewTool(QWidget):
             f"QPushButton {{ background: {WHITE}; color: {G700}; "
             f"border: 1px solid {G300}; border-radius: 5px; "
             f"font: 12px 'Segoe UI'; }}"
-            f"QPushButton:hover {{ background: {G100}; }}")
+            f"QPushButton:hover {{ background: {G100}; }}"
+        )
         return b
 
     def _nav_btn(self, text):
@@ -1219,7 +1316,8 @@ class ViewTool(QWidget):
             f"border: 1px solid {G300}; border-radius: 5px; "
             f"font: 13px 'Segoe UI'; }}"
             f"QPushButton:hover {{ background: {G100}; }}"
-            f"QPushButton:disabled {{ color: {G300}; border-color: {G200}; }}")
+            f"QPushButton:disabled {{ color: {G300}; border-color: {G200}; }}"
+        )
         return b
 
     # ==================================================================
@@ -1230,9 +1328,7 @@ class ViewTool(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(
-            f"QScrollArea {{ background: {WHITE}; border: none; }}"
-        )
+        scroll.setStyleSheet(f"QScrollArea {{ background: {WHITE}; border: none; }}")
 
         inner = QWidget()
         inner.setStyleSheet(f"background: {WHITE};")
@@ -1372,7 +1468,8 @@ class ViewTool(QWidget):
         pre_lbl = QLabel("PRESETS")
         pre_lbl.setStyleSheet(
             f"color: {G400}; font: bold 9px 'Segoe UI'; "
-            f"letter-spacing: 1px; background: transparent;")
+            f"letter-spacing: 1px; background: transparent;"
+        )
         cc_inner.addWidget(pre_lbl)
 
         swatches_w = QWidget()
@@ -1386,7 +1483,7 @@ class ViewTool(QWidget):
             btn.setFixedSize(26, 26)
             btn.setToolTip(name)
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            is_sel = (i == 0)
+            is_sel = i == 0
             btn.setStyleSheet(
                 f"QPushButton {{ background: {hex_c}; border-radius: 5px; "
                 f"border: {'2px solid white' if is_sel else '1px solid rgba(0,0,0,0.1)'}; }}"
@@ -1407,7 +1504,8 @@ class ViewTool(QWidget):
 
         recent_hdr = QLabel("RECENT")
         recent_hdr.setStyleSheet(
-            f"color: {G400}; font: bold 9px 'Segoe UI'; letter-spacing: 1px;")
+            f"color: {G400}; font: bold 9px 'Segoe UI'; letter-spacing: 1px;"
+        )
         recent_lay.addWidget(recent_hdr)
 
         self._recent_grid_w = QWidget()
@@ -1483,20 +1581,20 @@ class ViewTool(QWidget):
         hdr_lay.setSpacing(6)
         sec_lbl = QLabel("EXCERPTS")
         sec_lbl.setStyleSheet(
-            f"color: {G500}; font: bold 10px 'Segoe UI'; letter-spacing: 1px;")
+            f"color: {G500}; font: bold 10px 'Segoe UI'; letter-spacing: 1px;"
+        )
         hdr_lay.addWidget(sec_lbl)
         self._excerpt_count_lbl = QLabel("0")
-        self._excerpt_count_lbl.setStyleSheet(
-            f"color: {G400}; font: 10px 'Segoe UI';")
+        self._excerpt_count_lbl.setStyleSheet(f"color: {G400}; font: 10px 'Segoe UI';")
         hdr_lay.addWidget(self._excerpt_count_lbl)
         hdr_lay.addStretch()
         save_btn = QPushButton("Save PDF")
         save_btn.setFixedHeight(24)
         save_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         save_btn.setStyleSheet(
-            f"QPushButton {{ background: #16A34A; color: white; border: none; "
-            f"border-radius: 5px; font: bold 10px 'Segoe UI'; padding: 0 10px; }}"
-            f"QPushButton:hover {{ background: #15803D; }}"
+            "QPushButton { background: #16A34A; color: white; border: none; "
+            "border-radius: 5px; font: bold 10px 'Segoe UI'; padding: 0 10px; }"
+            "QPushButton:hover { background: #15803D; }"
         )
         save_btn.clicked.connect(self._save_excerpt_pdf)
         hdr_lay.addWidget(save_btn)
@@ -1506,7 +1604,8 @@ class ViewTool(QWidget):
         self._excerpt_scroll = QScrollArea()
         self._excerpt_scroll.setWidgetResizable(True)
         self._excerpt_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self._excerpt_scroll.setStyleSheet(
             f"QScrollArea {{ background: {WHITE}; border: none; }}"
         )
@@ -1517,7 +1616,9 @@ class ViewTool(QWidget):
         self._excerpt_list_lay.setSpacing(6)
         self._excerpt_list_lay.addStretch()
 
-        empty_lbl = QLabel("Draw a region with the\nExcerter tool (E) to\ncapture excerpts")
+        empty_lbl = QLabel(
+            "Draw a region with the\nExcerter tool (E) to\ncapture excerpts"
+        )
         empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_lbl.setStyleSheet(f"color: {G400}; font: 11px 'Segoe UI';")
         self._excerpt_list_lay.insertWidget(0, empty_lbl)
@@ -1542,42 +1643,57 @@ class ViewTool(QWidget):
             mat = fitz.Matrix(scale, scale)
             pix = page.get_pixmap(matrix=mat, clip=crop_rect, alpha=False)
             thumb = _fitz_pix_to_qpixmap(pix)
-        except Exception:
+        except RuntimeError:
             thumb = None
 
         # Pack snippet onto A4 pages vertically
         _A4_W, _A4_H = 595.0, 842.0
         try:
             src_doc = fitz.open(src_path)
-            snip_w = crop_rect.width
-            snip_h = crop_rect.height
-            if snip_w > _A4_W:
-                scale  = _A4_W / snip_w
-                snip_w = _A4_W
-                snip_h = snip_h * scale
-                dest_x = 0.0
-            else:
-                dest_x = crop_rect.x0
-                if dest_x + snip_w > _A4_W:
-                    dest_x = _A4_W - snip_w
-            if not self._excerpt_has_page or (self._excerpt_y_cursor + snip_h > _A4_H):
-                self._excerpt_out.new_page(width=_A4_W, height=_A4_H)
-                self._excerpt_y_cursor = 0.0
-                self._excerpt_has_page = True
-            pg = self._excerpt_out[-1]
-            dest_rect = fitz.Rect(dest_x, self._excerpt_y_cursor,
-                                  dest_x + snip_w, self._excerpt_y_cursor + snip_h)
-            pg.show_pdf_page(dest_rect, src_doc, page_idx, clip=crop_rect)
-            self._excerpt_y_cursor += snip_h
-            src_doc.close()
-        except Exception:
+            try:
+                snip_w = crop_rect.width
+                snip_h = crop_rect.height
+                if snip_w > _A4_W:
+                    scale = _A4_W / snip_w
+                    snip_w = _A4_W
+                    snip_h = snip_h * scale
+                    dest_x = 0.0
+                else:
+                    dest_x = crop_rect.x0
+                    if dest_x + snip_w > _A4_W:
+                        dest_x = _A4_W - snip_w
+                if not self._excerpt_has_page or (
+                    self._excerpt_y_cursor + snip_h > _A4_H
+                ):
+                    self._excerpt_out.new_page(width=_A4_W, height=_A4_H)
+                    self._excerpt_y_cursor = 0.0
+                    self._excerpt_has_page = True
+                pg = self._excerpt_out[-1]
+                dest_rect = fitz.Rect(
+                    dest_x,
+                    self._excerpt_y_cursor,
+                    dest_x + snip_w,
+                    self._excerpt_y_cursor + snip_h,
+                )
+                pg.show_pdf_page(dest_rect, src_doc, page_idx, clip=crop_rect)
+                self._excerpt_y_cursor += snip_h
+            finally:
+                src_doc.close()
+        except (FileNotFoundError, RuntimeError):
             pass
 
-        label = f"Page {page_idx + 1}  –  {int(crop_rect.width)}×{int(crop_rect.height)} pt"
-        self._excerpts.append({
-            "path": src_path, "page": page_idx,
-            "rect": crop_rect, "thumb": thumb, "label": label,
-        })
+        label = (
+            f"Page {page_idx + 1}  –  {int(crop_rect.width)}×{int(crop_rect.height)} pt"
+        )
+        self._excerpts.append(
+            {
+                "path": src_path,
+                "page": page_idx,
+                "rect": crop_rect,
+                "thumb": thumb,
+                "label": label,
+            }
+        )
         self._rebuild_excerpt_list()
         # Flash feedback on the canvas
         if flash_rect:
@@ -1621,13 +1737,18 @@ class ViewTool(QWidget):
             thumb_lbl = QLabel()
             thumb_lbl.setFixedSize(56, 56)
             thumb_lbl.setStyleSheet(
-                f"border: 1px solid {G200}; border-radius: 4px; background: {G50};")
+                f"border: 1px solid {G200}; border-radius: 4px; background: {G50};"
+            )
             thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             if exc.get("thumb"):
                 thumb_lbl.setPixmap(
-                    exc["thumb"].scaled(54, 54,
-                                        Qt.AspectRatioMode.KeepAspectRatio,
-                                        Qt.TransformationMode.SmoothTransformation))
+                    exc["thumb"].scaled(
+                        54,
+                        54,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
             card_lay.addWidget(thumb_lbl)
 
             # Label + index
@@ -1635,7 +1756,8 @@ class ViewTool(QWidget):
             info_col.setSpacing(2)
             idx_lbl = QLabel(f"#{i + 1}")
             idx_lbl.setStyleSheet(
-                f"color: {BLUE}; font: bold 11px 'Segoe UI'; border: none;")
+                f"color: {BLUE}; font: bold 11px 'Segoe UI'; border: none;"
+            )
             info_col.addWidget(idx_lbl)
             lbl = QLabel(exc["label"])
             lbl.setWordWrap(True)
@@ -1651,11 +1773,13 @@ class ViewTool(QWidget):
             del_btn.setFixedSize(22, 22)
             del_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             del_btn.setStyleSheet(
-                f"QPushButton {{ background: transparent; "
-                f"border: none; border-radius: 4px; }}"
-                f"QPushButton:hover {{ background: #FEE2E2; }}"
+                "QPushButton { background: transparent; "
+                "border: none; border-radius: 4px; }"
+                "QPushButton:hover { background: #FEE2E2; }"
             )
-            del_btn.clicked.connect(lambda checked=False, idx=i: self._delete_excerpt(idx))
+            del_btn.clicked.connect(
+                lambda checked=False, idx=i: self._delete_excerpt(idx)
+            )
             card_lay.addWidget(del_btn, 0, Qt.AlignmentFlag.AlignTop)
 
             lay.insertWidget(lay.count() - 1, card)
@@ -1673,29 +1797,37 @@ class ViewTool(QWidget):
             _A4_W, _A4_H = 595.0, 842.0
             for exc in self._excerpts:
                 try:
-                    src    = fitz.open(exc["path"])
-                    snip_w = exc["rect"].width
-                    snip_h = exc["rect"].height
-                    if snip_w > _A4_W:
-                        scale  = _A4_W / snip_w
-                        snip_w = _A4_W
-                        snip_h = snip_h * scale
-                        dest_x = 0.0
-                    else:
-                        dest_x = exc["rect"].x0
-                        if dest_x + snip_w > _A4_W:
-                            dest_x = _A4_W - snip_w
-                    if not self._excerpt_has_page or (self._excerpt_y_cursor + snip_h > _A4_H):
-                        self._excerpt_out.new_page(width=_A4_W, height=_A4_H)
-                        self._excerpt_y_cursor = 0.0
-                        self._excerpt_has_page = True
-                    pg = self._excerpt_out[-1]
-                    dr = fitz.Rect(dest_x, self._excerpt_y_cursor,
-                                   dest_x + snip_w, self._excerpt_y_cursor + snip_h)
-                    pg.show_pdf_page(dr, src, exc["page"], clip=exc["rect"])
-                    self._excerpt_y_cursor += snip_h
-                    src.close()
-                except Exception:
+                    src = fitz.open(exc["path"])
+                    try:
+                        snip_w = exc["rect"].width
+                        snip_h = exc["rect"].height
+                        if snip_w > _A4_W:
+                            scale = _A4_W / snip_w
+                            snip_w = _A4_W
+                            snip_h = snip_h * scale
+                            dest_x = 0.0
+                        else:
+                            dest_x = exc["rect"].x0
+                            if dest_x + snip_w > _A4_W:
+                                dest_x = _A4_W - snip_w
+                        if not self._excerpt_has_page or (
+                            self._excerpt_y_cursor + snip_h > _A4_H
+                        ):
+                            self._excerpt_out.new_page(width=_A4_W, height=_A4_H)
+                            self._excerpt_y_cursor = 0.0
+                            self._excerpt_has_page = True
+                        pg = self._excerpt_out[-1]
+                        dr = fitz.Rect(
+                            dest_x,
+                            self._excerpt_y_cursor,
+                            dest_x + snip_w,
+                            self._excerpt_y_cursor + snip_h,
+                        )
+                        pg.show_pdf_page(dr, src, exc["page"], clip=exc["rect"])
+                        self._excerpt_y_cursor += snip_h
+                    finally:
+                        src.close()
+                except (FileNotFoundError, RuntimeError):
                     pass
         self._rebuild_excerpt_list()
 
@@ -1708,7 +1840,8 @@ class ViewTool(QWidget):
             QMessageBox.information(self, "Excerpts", "No excerpts captured yet.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Excerpt PDF", "", "PDF Files (*.pdf)")
+            self, "Save Excerpt PDF", "", "PDF Files (*.pdf)"
+        )
         if not path:
             return
         if not path.lower().endswith(".pdf"):
@@ -1736,7 +1869,7 @@ class ViewTool(QWidget):
 
     def _update_tab_btn_styles(self):
         for i, btn in self._tab_btns.items():
-            active = (i == self._active_tab_idx)
+            active = i == self._active_tab_idx
             btn.setStyleSheet(
                 f"QPushButton {{ background: {'#FFFFFF' if active else 'transparent'}; "
                 f"color: {G700}; border: none; border-radius: 4px; "
@@ -1764,20 +1897,20 @@ class ViewTool(QWidget):
         for t, btn in self._tool_buttons.items():
             self._style_tool_btn(btn, t == tool)
         cursors = {
-            Tool.VIEW:          Qt.CursorShape.ArrowCursor,
-            Tool.SELECT:        Qt.CursorShape.IBeamCursor,
-            Tool.HIGHLIGHT:     Qt.CursorShape.IBeamCursor,
-            Tool.UNDERLINE:     Qt.CursorShape.IBeamCursor,
+            Tool.VIEW: Qt.CursorShape.ArrowCursor,
+            Tool.SELECT: Qt.CursorShape.IBeamCursor,
+            Tool.HIGHLIGHT: Qt.CursorShape.IBeamCursor,
+            Tool.UNDERLINE: Qt.CursorShape.IBeamCursor,
             Tool.STRIKETHROUGH: Qt.CursorShape.IBeamCursor,
-            Tool.FREEHAND:      Qt.CursorShape.CrossCursor,
-            Tool.TEXT_BOX:      Qt.CursorShape.CrossCursor,
-            Tool.STICKY_NOTE:   Qt.CursorShape.CrossCursor,
-            Tool.RECT:          Qt.CursorShape.CrossCursor,
-            Tool.CIRCLE:        Qt.CursorShape.CrossCursor,
-            Tool.LINE:          Qt.CursorShape.CrossCursor,
-            Tool.ARROW:         Qt.CursorShape.CrossCursor,
-            Tool.SIGN:          Qt.CursorShape.CrossCursor,
-            Tool.EXCERTER:      Qt.CursorShape.CrossCursor,
+            Tool.FREEHAND: Qt.CursorShape.CrossCursor,
+            Tool.TEXT_BOX: Qt.CursorShape.CrossCursor,
+            Tool.STICKY_NOTE: Qt.CursorShape.CrossCursor,
+            Tool.RECT: Qt.CursorShape.CrossCursor,
+            Tool.CIRCLE: Qt.CursorShape.CrossCursor,
+            Tool.LINE: Qt.CursorShape.CrossCursor,
+            Tool.ARROW: Qt.CursorShape.CrossCursor,
+            Tool.SIGN: Qt.CursorShape.CrossCursor,
+            Tool.EXCERTER: Qt.CursorShape.CrossCursor,
         }
         self._canvas.setCursor(QCursor(cursors.get(tool, Qt.CursorShape.ArrowCursor)))
 
@@ -1787,7 +1920,7 @@ class ViewTool(QWidget):
         _, sel_hex, _ = ANNOT_COLORS[idx]
         for i, btn in enumerate(self._color_btns):
             _, hex_c, _ = ANNOT_COLORS[i]
-            is_sel = (i == idx)
+            is_sel = i == idx
             btn.setStyleSheet(
                 f"QPushButton {{ background: {hex_c}; border-radius: 5px; "
                 f"border: {'2px solid white' if is_sel else '1px solid rgba(0,0,0,0.1)'}; }}"
@@ -1822,9 +1955,9 @@ class ViewTool(QWidget):
         self._add_to_recent(hex_str)
 
     def _apply_hex_color(self):
-        raw = self._hex_entry.text().strip().lstrip('#')
+        raw = self._hex_entry.text().strip().lstrip("#")
         if len(raw) == 3:
-            raw = raw[0]*2 + raw[1]*2 + raw[2]*2
+            raw = raw[0] * 2 + raw[1] * 2 + raw[2] * 2
         if len(raw) != 6:
             return
         try:
@@ -1839,8 +1972,8 @@ class ViewTool(QWidget):
         _, current_hex, _ = self._annot_color
         initial = QColor(current_hex)
         color = QColorDialog.getColor(
-            initial, self, "Pick Color",
-            QColorDialog.ColorDialogOption.ShowAlphaChannel)
+            initial, self, "Pick Color", QColorDialog.ColorDialogOption.ShowAlphaChannel
+        )
         if color.isValid():
             self._apply_custom_color(color.red(), color.green(), color.blue())
 
@@ -1872,7 +2005,7 @@ class ViewTool(QWidget):
             self._recent_grid.addWidget(swatch, row, col)
 
     def _apply_recent_color(self, hex_str: str):
-        raw = hex_str.lstrip('#')
+        raw = hex_str.lstrip("#")
         r = int(raw[0:2], 16)
         g = int(raw[2:4], 16)
         b = int(raw[4:6], 16)
@@ -1899,18 +2032,18 @@ class ViewTool(QWidget):
 
     def _install_shortcuts(self):
         shortcuts = [
-            ("Ctrl+F",  self._toggle_search),
-            ("Ctrl+S",  self._save_pdf),
-            ("Ctrl+C",  self._copy_selection),
-            ("Ctrl+Z",  self._undo),
-            ("Ctrl+Y",  self._redo),
-            ("Escape",  self._escape),
-            ("Left",    self._prev_page),
-            ("Right",   self._next_page),
-            ("Home",    self._first_page),
-            ("End",     self._last_page),
-            ("+",       self._zoom_in),
-            ("-",       self._zoom_out),
+            ("Ctrl+F", self._toggle_search),
+            ("Ctrl+S", self._save_pdf),
+            ("Ctrl+C", self._copy_selection),
+            ("Ctrl+Z", self._undo),
+            ("Ctrl+Y", self._redo),
+            ("Escape", self._escape),
+            ("Left", self._prev_page),
+            ("Right", self._next_page),
+            ("Home", self._first_page),
+            ("End", self._last_page),
+            ("+", self._zoom_in),
+            ("-", self._zoom_out),
         ]
         for key, slot in shortcuts:
             sc = QShortcut(QKeySequence(key), self)
@@ -1929,7 +2062,7 @@ class ViewTool(QWidget):
             if len(self._undo_stack) > MAX_UNDO:
                 self._undo_stack.pop(0)
             self._redo_stack.clear()
-        except Exception:
+        except RuntimeError:
             pass
 
     def _undo(self):
@@ -1969,8 +2102,7 @@ class ViewTool(QWidget):
     # ==================================================================
 
     def _pick_pdf(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Open PDF", "",
-                                           "PDF Files (*.pdf)")
+        p, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if not p:
             return
         self.pdf_path = p
@@ -2008,15 +2140,16 @@ class ViewTool(QWidget):
         if not self.doc:
             self._pick_pdf()
             return
-        p, _ = QFileDialog.getOpenFileName(self, "Add PDF", "",
-                                           "PDF Files (*.pdf)")
+        p, _ = QFileDialog.getOpenFileName(self, "Add PDF", "", "PDF Files (*.pdf)")
         if not p:
             return
         try:
             self._push_undo()
             src = fitz.open(p)
-            self.doc.insert_pdf(src)
-            src.close()
+            try:
+                self.doc.insert_pdf(src)
+            finally:
+                src.close()
             self.total_pages = len(self.doc)
             self._modified = True
 
@@ -2027,7 +2160,7 @@ class ViewTool(QWidget):
             self._render_thumbnails()
             self._build_toc()
             self._show_page(self.current_page)
-        except Exception as e:
+        except (FileNotFoundError, RuntimeError) as e:
             QMessageBox.critical(self, "Error", f"Could not add PDF:\n{e}")
 
     # ==================================================================
@@ -2047,8 +2180,7 @@ class ViewTool(QWidget):
 
         for i in range(self.total_pages):
             frame = QWidget()
-            frame.setStyleSheet(
-                f"background: {WHITE}; border-radius: 4px;")
+            frame.setStyleSheet(f"background: {WHITE}; border-radius: 4px;")
             frame.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             frame_lay = QVBoxLayout(frame)
             frame_lay.setContentsMargins(4, 4, 4, 2)
@@ -2060,18 +2192,19 @@ class ViewTool(QWidget):
             img_lbl.setFixedSize(self.THUMB_W, ph)
             img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             img_lbl.setStyleSheet(
-                f"background: {G200}; border: 2px solid {G300}; border-radius: 2px;")
+                f"background: {G200}; border: 2px solid {G300}; border-radius: 2px;"
+            )
             frame_lay.addWidget(img_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
             num_lbl = QLabel(str(i + 1))
             num_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             num_lbl.setStyleSheet(
-                f"color: {G500}; font: 10px 'Segoe UI'; background: transparent;")
+                f"color: {G500}; font: 10px 'Segoe UI'; background: transparent;"
+            )
             frame_lay.addWidget(num_lbl)
 
             frame.mousePressEvent = lambda e, idx=i: self._show_page(idx)
-            self._thumb_layout.insertWidget(
-                self._thumb_layout.count() - 1, frame)
+            self._thumb_layout.insertWidget(self._thumb_layout.count() - 1, frame)
             self._thumb_imgs.append((None, frame, img_lbl))
 
         self._thumb_render_next = 0
@@ -2081,7 +2214,7 @@ class ViewTool(QWidget):
         if not self.doc:
             return
         start = self._thumb_render_next
-        end   = min(start + batch, self.total_pages)
+        end = min(start + batch, self.total_pages)
 
         for i in range(start, end):
             pm, frame, img_lbl = self._thumb_imgs[i]
@@ -2095,7 +2228,8 @@ class ViewTool(QWidget):
             img_lbl.setFixedSize(new_pm.width(), new_pm.height())
             img_lbl.setPixmap(new_pm)
             img_lbl.setStyleSheet(
-                f"background: {WHITE}; border: 2px solid {G300}; border-radius: 2px;")
+                f"background: {WHITE}; border: 2px solid {G300}; border-radius: 2px;"
+            )
 
         self._thumb_render_next = end
         if end < self.total_pages:
@@ -2107,13 +2241,15 @@ class ViewTool(QWidget):
             try:
                 _, frame, img_lbl = self._highlighted_thumb_frame
                 img_lbl.setStyleSheet(
-                    f"background: {WHITE}; border: 2px solid {G300}; border-radius: 2px;")
-            except Exception:
+                    f"background: {WHITE}; border: 2px solid {G300}; border-radius: 2px;"
+                )
+            except RuntimeError:
                 pass
         if 0 <= idx < len(self._thumb_imgs):
             _, frame, img_lbl = self._thumb_imgs[idx]
             img_lbl.setStyleSheet(
-                f"background: {WHITE}; border: 3px solid {BLUE}; border-radius: 2px;")
+                f"background: {WHITE}; border: 3px solid {BLUE}; border-radius: 2px;"
+            )
             self._highlighted_thumb_frame = self._thumb_imgs[idx]
             # Scroll to thumbnail
             QTimer.singleShot(50, lambda: self._scroll_to_thumb(idx))
@@ -2154,9 +2290,11 @@ class ViewTool(QWidget):
                 f"border: none; text-align: left; "
                 f"font: {bold} 11px 'Segoe UI'; "
                 f"padding-left: {indent + 8}px; }}"
-                f"QPushButton:hover {{ background: {G200}; border-radius: 4px; }}")
+                f"QPushButton:hover {{ background: {G200}; border-radius: 4px; }}"
+            )
             btn.clicked.connect(
-                lambda checked=False, p=page_num: self._show_page(p - 1))
+                lambda checked=False, p=page_num: self._show_page(p - 1)
+            )
             self._toc_layout.insertWidget(i, btn)
 
     # ==================================================================
@@ -2342,33 +2480,39 @@ class ViewTool(QWidget):
             self._btn_fit.setStyleSheet(
                 f"QPushButton {{ background: {BLUE}; color: {WHITE}; "
                 f"border-radius: 5px; font: 11px 'Segoe UI'; }}"
-                f"QPushButton:hover {{ background: {BLUE_HOVER}; }}")
+                f"QPushButton:hover {{ background: {BLUE_HOVER}; }}"
+            )
             self._btn_fitw.setStyleSheet(
                 f"QPushButton {{ background: {WHITE}; color: {G700}; "
                 f"border: 1px solid {G300}; border-radius: 5px; "
                 f"font: bold 11px 'Segoe UI'; }}"
-                f"QPushButton:hover {{ background: {G100}; }}")
+                f"QPushButton:hover {{ background: {G100}; }}"
+            )
         elif self.zoom == FIT_WIDTH:
             self._zoom_lbl.setText("Width")
             self._btn_fit.setStyleSheet(
                 f"QPushButton {{ background: {WHITE}; color: {G700}; "
                 f"border: 1px solid {G300}; border-radius: 5px; font: 11px 'Segoe UI'; }}"
-                f"QPushButton:hover {{ background: {G100}; }}")
+                f"QPushButton:hover {{ background: {G100}; }}"
+            )
             self._btn_fitw.setStyleSheet(
                 f"QPushButton {{ background: {BLUE}; color: {WHITE}; "
                 f"border-radius: 5px; font: bold 11px 'Segoe UI'; }}"
-                f"QPushButton:hover {{ background: {BLUE_HOVER}; }}")
+                f"QPushButton:hover {{ background: {BLUE_HOVER}; }}"
+            )
         else:
             self._zoom_lbl.setText(f"{int(self.zoom * 100)}%")
             self._btn_fit.setStyleSheet(
                 f"QPushButton {{ background: {WHITE}; color: {G700}; "
                 f"border: 1px solid {G300}; border-radius: 5px; font: 11px 'Segoe UI'; }}"
-                f"QPushButton:hover {{ background: {G100}; }}")
+                f"QPushButton:hover {{ background: {G100}; }}"
+            )
             self._btn_fitw.setStyleSheet(
                 f"QPushButton {{ background: {WHITE}; color: {G700}; "
                 f"border: 1px solid {G300}; border-radius: 5px; "
                 f"font: bold 11px 'Segoe UI'; }}"
-                f"QPushButton:hover {{ background: {G100}; }}")
+                f"QPushButton:hover {{ background: {G100}; }}"
+            )
 
     def _rotate_view(self):
         self._rotation = (self._rotation + 90) % 360
@@ -2487,7 +2631,7 @@ class ViewTool(QWidget):
         if si is None or ei is None:
             return []
         lo, hi = min(si, ei), max(si, ei)
-        return chars[lo:hi + 1]
+        return chars[lo : hi + 1]
 
     @staticmethod
     def _nearest_char_index(chars, px, py):
@@ -2497,7 +2641,7 @@ class ViewTool(QWidget):
                 return i
         # Fallback: nearest by distance, strongly preferring same-line characters
         best_idx = None
-        best_dist = float('inf')
+        best_dist = float("inf")
         for i, c in enumerate(chars):
             cx = (c[0] + c[2]) * 0.5
             cy = (c[1] + c[3]) * 0.5
@@ -2526,8 +2670,10 @@ class ViewTool(QWidget):
 
         # EXCERTER uses its own rubber-band state, not _drag_start
         if self._tool == Tool.EXCERTER:
-            if (self._page_ox <= cx <= self._page_ox + self._page_iw and
-                    self._page_oy <= cy <= self._page_oy + self._page_ih):
+            if (
+                self._page_ox <= cx <= self._page_ox + self._page_iw
+                and self._page_oy <= cy <= self._page_oy + self._page_ih
+            ):
                 self._rb_start = (cx, cy)
                 self._rb_current = (cx, cy)
                 self._canvas.update()
@@ -2570,11 +2716,14 @@ class ViewTool(QWidget):
         if self._tool == Tool.VIEW:
             return
 
-        elif self._tool in (Tool.SELECT, Tool.HIGHLIGHT,
-                             Tool.UNDERLINE, Tool.STRIKETHROUGH):
+        elif self._tool in (
+            Tool.SELECT,
+            Tool.HIGHLIGHT,
+            Tool.UNDERLINE,
+            Tool.STRIKETHROUGH,
+        ):
             start_px, start_py = self._canvas_to_pdf(sx, sy)
-            self._selected_words = self._select_chars_flow(
-                start_px, start_py, px, py)
+            self._selected_words = self._select_chars_flow(start_px, start_py, px, py)
             self._selection_text = "".join(w[4] for w in self._selected_words)
             self._canvas.update()
 
@@ -2674,8 +2823,7 @@ class ViewTool(QWidget):
                 dx = side if dx >= 0 else -side
                 dy = side if dy >= 0 else -side
             end_px, end_py = self._canvas_to_pdf(sx + dx, sy + dy)
-            r = fitz.Rect(fitz.Point(start_px, start_py),
-                          fitz.Point(end_px, end_py))
+            r = fitz.Rect(fitz.Point(start_px, start_py), fitz.Point(end_px, end_py))
             r.normalize()
             if r.width > 2 and r.height > 2:
                 self._push_undo()
@@ -2694,8 +2842,7 @@ class ViewTool(QWidget):
                 dx = side if dx >= 0 else -side
                 dy = side if dy >= 0 else -side
             end_px, end_py = self._canvas_to_pdf(sx + dx, sy + dy)
-            r = fitz.Rect(fitz.Point(start_px, start_py),
-                          fitz.Point(end_px, end_py))
+            r = fitz.Rect(fitz.Point(start_px, start_py), fitz.Point(end_px, end_py))
             r.normalize()
             if r.width > 2 and r.height > 2:
                 self._push_undo()
@@ -2725,8 +2872,8 @@ class ViewTool(QWidget):
                 annot.set_border(width=self._stroke_width)
                 if self._tool == Tool.ARROW:
                     annot.set_line_ends(
-                        fitz.PDF_ANNOT_LE_NONE,
-                        fitz.PDF_ANNOT_LE_CLOSED_ARROW)
+                        fitz.PDF_ANNOT_LE_NONE, fitz.PDF_ANNOT_LE_CLOSED_ARROW
+                    )
                 annot.update()
                 self._modified = True
                 self._show_page(self.current_page)
@@ -2743,8 +2890,12 @@ class ViewTool(QWidget):
         page = self.doc[self.current_page]
 
         # Word-snap selection for text tools
-        if self._tool in (Tool.SELECT, Tool.HIGHLIGHT,
-                          Tool.UNDERLINE, Tool.STRIKETHROUGH):
+        if self._tool in (
+            Tool.SELECT,
+            Tool.HIGHLIGHT,
+            Tool.UNDERLINE,
+            Tool.STRIKETHROUGH,
+        ):
             for w in self._get_words():
                 if w[0] <= px <= w[2] and w[1] <= py <= w[3]:
                     self._selected_words = [w]
@@ -2765,7 +2916,8 @@ class ViewTool(QWidget):
     def _edit_sticky(self, annot):
         old_text = annot.info.get("content", "")
         text, ok = QInputDialog.getText(
-            self, "Edit Sticky Note", "Edit note text:", text=old_text)
+            self, "Edit Sticky Note", "Edit note text:", text=old_text
+        )
         if not ok:
             return
         self._push_undo()
@@ -2786,7 +2938,7 @@ class ViewTool(QWidget):
         old_text = ""
         if existing_annot:
             old_text = existing_annot.info.get("content", "")
-        title  = "Edit Text Box" if existing_annot else "Add Text Box"
+        title = "Edit Text Box" if existing_annot else "Add Text Box"
         prompt = "Edit text box:" if existing_annot else "Enter text for the text box:"
         text, ok = QInputDialog.getText(self, title, prompt, text=old_text)
         if not ok:
@@ -2805,21 +2957,30 @@ class ViewTool(QWidget):
             if text:
                 width = max(old_rect.width, len(text) * fontsize * 0.6)
                 height = max(old_rect.height, fontsize * 2)
-                rect = fitz.Rect(old_rect.x0, old_rect.y0,
-                                 old_rect.x0 + width, old_rect.y0 + height)
+                rect = fitz.Rect(
+                    old_rect.x0, old_rect.y0, old_rect.x0 + width, old_rect.y0 + height
+                )
                 annot = page.add_freetext_annot(
-                    rect, text, fontsize=fontsize,
-                    text_color=fitz_rgb, fontname="helv",
-                    fill_color=None)
+                    rect,
+                    text,
+                    fontsize=fontsize,
+                    text_color=fitz_rgb,
+                    fontname="helv",
+                    fill_color=None,
+                )
                 annot.update()
         else:
             width = max(100, len(text) * fontsize * 0.6)
             height = fontsize * 2.5
             rect = fitz.Rect(pdf_x, pdf_y, pdf_x + width, pdf_y + height)
             annot = page.add_freetext_annot(
-                rect, text, fontsize=fontsize,
-                text_color=fitz_rgb, fontname="helv",
-                fill_color=None)
+                rect,
+                text,
+                fontsize=fontsize,
+                text_color=fitz_rgb,
+                fontname="helv",
+                fill_color=None,
+            )
             annot.update()
 
         self._modified = True
@@ -2873,7 +3034,7 @@ class ViewTool(QWidget):
         for w in self._form_widgets:
             try:
                 w.deleteLater()
-            except Exception:
+            except RuntimeError:
                 pass
         self._form_widgets.clear()
 
@@ -2896,12 +3057,14 @@ class ViewTool(QWidget):
                 entry.setGeometry(int(x0), int(y0), w, h)
                 entry.setStyleSheet(
                     f"QLineEdit {{ background: {WHITE}; border: 1px solid {BLUE}; "
-                    f"color: {G900}; font: {max(9, h - 8)}px 'Segoe UI'; }}")
+                    f"color: {G900}; font: {max(9, h - 8)}px 'Segoe UI'; }}"
+                )
                 if widget.field_value:
                     entry.setText(str(widget.field_value))
                 entry._pdf_widget = widget
                 entry.editingFinished.connect(
-                    lambda ent=entry: self._update_form_field(ent))
+                    lambda ent=entry: self._update_form_field(ent)
+                )
                 entry.show()
                 self._form_widgets.append(entry)
 
@@ -2911,7 +3074,8 @@ class ViewTool(QWidget):
                 cb.setChecked(bool(widget.field_value))
                 cb._pdf_widget = widget
                 cb.stateChanged.connect(
-                    lambda state, cbox=cb: self._update_checkbox(cbox))
+                    lambda state, cbox=cb: self._update_checkbox(cbox)
+                )
                 cb.show()
                 self._form_widgets.append(cb)
 
@@ -2923,12 +3087,14 @@ class ViewTool(QWidget):
                     combo.addItems(choices)
                     combo.setStyleSheet(
                         f"QComboBox {{ background: {WHITE}; border: 1px solid {BLUE}; "
-                        f"color: {G900}; }}")
+                        f"color: {G900}; }}"
+                    )
                     if widget.field_value and widget.field_value in choices:
                         combo.setCurrentText(widget.field_value)
                     combo._pdf_widget = widget
                     combo.currentTextChanged.connect(
-                        lambda val, c=combo: self._update_combo(c, val))
+                        lambda val, c=combo: self._update_combo(c, val)
+                    )
                     combo.show()
                     self._form_widgets.append(combo)
 
@@ -2962,13 +3128,13 @@ class ViewTool(QWidget):
             return
         initial = Path(self.pdf_path).name if self.pdf_path else "output.pdf"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF", initial, "PDF Files (*.pdf)")
+            self, "Save PDF", initial, "PDF Files (*.pdf)"
+        )
         if not path:
             return
         try:
             if path == self.pdf_path:
-                self.doc.save(path, incremental=True,
-                              encryption=fitz.PDF_ENCRYPT_KEEP)
+                self.doc.save(path, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
             else:
                 self.doc.save(path)
             self._modified = False
@@ -2990,8 +3156,8 @@ class ViewTool(QWidget):
                 subprocess.run(["lpr", tmp_path], check=True)
             else:
                 QMessageBox.information(
-                    self, "Print",
-                    f"PDF saved to {tmp_path}\nPlease print it manually.")
+                    self, "Print", f"PDF saved to {tmp_path}\nPlease print it manually."
+                )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Print failed:\n{e}")
 

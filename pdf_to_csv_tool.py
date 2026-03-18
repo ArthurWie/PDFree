@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import csv
 import datetime
-import io
 import os
 import re
 import subprocess
@@ -17,17 +16,40 @@ import unicodedata
 from typing import Optional
 
 from PySide6.QtWidgets import (
-    QWidget, QFrame, QLabel, QPushButton, QLineEdit,
-    QComboBox, QScrollArea, QHBoxLayout, QVBoxLayout, QStackedWidget,
-    QFileDialog, QMessageBox, QInputDialog, QProgressBar, QSizePolicy,
+    QWidget,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QLineEdit,
+    QComboBox,
+    QScrollArea,
+    QHBoxLayout,
+    QVBoxLayout,
+    QStackedWidget,
+    QFileDialog,
+    QMessageBox,
+    QInputDialog,
+    QProgressBar,
+    QSizePolicy,
     QApplication,
 )
-from PySide6.QtCore import Qt, QTimer, QEvent, QObject, QSize
-from PySide6.QtGui import QPainter, QColor, QPixmap, QPen, QFont, QCursor, QIcon
-from icons import svg_pixmap, svg_icon
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QPainter, QColor, QPixmap, QPen, QFont, QIcon
+from icons import svg_pixmap
 from colors import (
-    BG, WHITE, G100, G200, G300, G400, G500, G700, G900,
-    BLUE, BLUE_HOVER, GREEN, RED, THUMB_BG,
+    WHITE,
+    G100,
+    G200,
+    G300,
+    G400,
+    G500,
+    G700,
+    G900,
+    BLUE,
+    BLUE_HOVER,
+    GREEN,
+    RED,
+    THUMB_BG,
 )
 from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
 
@@ -36,12 +58,14 @@ from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
 # ---------------------------------------------------------------------------
 try:
     import fitz
+
     _HAS_FITZ = True
 except ImportError:
     _HAS_FITZ = False
 
 try:
     import pdfplumber
+
     _HAS_PLUMBER = True
 except ImportError:
     _HAS_PLUMBER = False
@@ -50,26 +74,27 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 ENCODING_MAP = {
-    "UTF-8":          "utf-8",
+    "UTF-8": "utf-8",
     "UTF-8 with BOM": "utf-8-sig",
-    "UTF-16":         "utf-16",
-    "ASCII":          "ascii",
-    "Windows-1252":   "cp1252",
-    "ISO-8859-1":     "iso-8859-1",
+    "UTF-16": "utf-16",
+    "ASCII": "ascii",
+    "Windows-1252": "cp1252",
+    "ISO-8859-1": "iso-8859-1",
 }
 
 DELIMITER_MAP = {
-    "Comma (,)":     ",",
+    "Comma (,)": ",",
     "Semicolon (;)": ";",
-    "Tab":           "\t",
-    "Pipe (|)":      "|",
+    "Tab": "\t",
+    "Pipe (|)": "|",
 }
 
 LINE_ENDING_MAP = {
     "System default": os.linesep,
-    "Unix (LF)":      "\n",
+    "Unix (LF)": "\n",
     "Windows (CRLF)": "\r\n",
 }
+
 
 def _render_page_qpixmap(doc, idx: int, max_w: int):
     page = doc[idx]
@@ -89,12 +114,12 @@ def _render_thumb_qpixmap(doc, idx: int, thumb_w: int) -> QPixmap:
 # Custom page-preview canvas widget
 # ---------------------------------------------------------------------------
 
+
 class _PreviewCanvas(QWidget):
     def __init__(self, tool: "PDFtoCSVTool", parent=None):
         super().__init__(parent)
         self._t = tool
-        self.setSizePolicy(QSizePolicy.Policy.Expanding,
-                           QSizePolicy.Policy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(300, 300)
 
     def paintEvent(self, _):
@@ -105,17 +130,19 @@ class _PreviewCanvas(QWidget):
         if t._page_pixmap is None:
             p.setPen(QColor(G400))
             p.setFont(QFont("Segoe UI", 13))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Open a PDF to preview it here")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Open a PDF to preview it here",
+            )
             return
         p.drawPixmap(t._page_ox, t._page_oy, t._page_pixmap)
         # Draw table outlines
         pen = QPen(QColor(BLUE), 2, Qt.PenStyle.DashLine)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        for (cx0, cy0, cx1, cy1) in t._canvas_table_rects:
-            p.drawRect(int(cx0), int(cy0),
-                       int(cx1 - cx0), int(cy1 - cy0))
+        for cx0, cy0, cx1, cy1 in t._canvas_table_rects:
+            p.drawRect(int(cx0), int(cy0), int(cx1 - cx0), int(cy1 - cy0))
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -127,8 +154,9 @@ class _PreviewCanvas(QWidget):
 # Main tool class
 # ---------------------------------------------------------------------------
 
+
 class PDFtoCSVTool(QWidget):
-    LEFT_W  = 460
+    LEFT_W = 460
     THUMB_W = 80
 
     def __init__(self, parent=None):
@@ -138,11 +166,11 @@ class PDFtoCSVTool(QWidget):
         self.pdf_path: str = ""
         self.output_dir: str = ""
         self._password: str = ""
-        self._doc   = None          # fitz.Document
-        self._pldoc = None          # pdfplumber document
+        self._doc = None  # fitz.Document
+        self._pldoc = None  # pdfplumber document
         self._total_pages = 0
         self._current_page = 0
-        self._thumb_pixmaps: list = []   # list of (QPixmap|None, frame_widget, label_widget)
+        self._thumb_pixmaps: list = []  # list of (QPixmap|None, frame_widget, label_widget)
         self._thumb_render_next = 0
         self._thumb_timer: Optional[QTimer] = None
         self._highlighted_thumb_frame = None
@@ -156,28 +184,28 @@ class PDFtoCSVTool(QWidget):
 
         # ── Settings defaults & widget registry ───────────────────────────
         self._sv_defaults = {
-            "detection":    "Auto",
-            "row_tol":      "3",
-            "col_tol":      "3",
-            "header":       "Auto-detect",
-            "linebreak":    "Replace with space",
-            "custom_lb":    " | ",
-            "merged":       "First column only",
-            "vert_merge":   "First row only",
+            "detection": "Auto",
+            "row_tol": "3",
+            "col_tol": "3",
+            "header": "Auto-detect",
+            "linebreak": "Replace with space",
+            "custom_lb": " | ",
+            "merged": "First column only",
+            "vert_merge": "First row only",
             "empty_marker": "",
-            "delimiter":    "Comma (,)",
-            "encoding":     "UTF-8 with BOM",
-            "multi":        "Separate file per table",
-            "range":        "all",
-            "overwrite":    "Rename with suffix",
-            "image_only":   "Skip with warning",
-            "min_rows":     "1",
-            "min_cols":     "1",
-            "source_meta":  "None",
-            "strip_ws":     "Enabled",
-            "line_ending":  "System default",
+            "delimiter": "Comma (,)",
+            "encoding": "UTF-8 with BOM",
+            "multi": "Separate file per table",
+            "range": "all",
+            "overwrite": "Rename with suffix",
+            "image_only": "Skip with warning",
+            "min_rows": "1",
+            "min_cols": "1",
+            "source_meta": "None",
+            "strip_ws": "Enabled",
+            "line_ending": "System default",
             "unicode_norm": "NFC (recommended)",
-            "type_detect":  "Disabled",
+            "type_detect": "Disabled",
         }
         self._widgets: dict = {}
 
@@ -277,14 +305,16 @@ class PDFtoCSVTool(QWidget):
         self._file_entry.setFixedHeight(34)
         self._file_entry.setStyleSheet(
             f"background: {WHITE}; color: {G700}; border: 1px solid {G200}; "
-            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;")
+            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;"
+        )
         fr_h.addWidget(self._file_entry, 1)
         browse_btn = QPushButton("Browse")
         browse_btn.setFixedSize(72, 34)
         browse_btn.setStyleSheet(
             f"QPushButton {{background: {BLUE}; color: white; border-radius: 6px; "
             f"font: 13px 'Segoe UI';}} "
-            f"QPushButton:hover {{background: {BLUE_HOVER};}}")
+            f"QPushButton:hover {{background: {BLUE_HOVER};}}"
+        )
         browse_btn.clicked.connect(self._browse_file)
         fr_h.addWidget(browse_btn)
         left.addWidget(file_row)
@@ -303,7 +333,8 @@ class PDFtoCSVTool(QWidget):
         range_entry.setFixedWidth(110)
         range_entry.setStyleSheet(
             f"background: {WHITE}; color: {G700}; border: 1px solid {G200}; "
-            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;")
+            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;"
+        )
         rr_h.addWidget(range_entry)
         self._widgets["range"] = range_entry
         hint = QLabel("e.g. all  1  3-7  1,3,5-7")
@@ -314,8 +345,12 @@ class PDFtoCSVTool(QWidget):
 
         # ── Table Detection ───────────────────────────────────────────────
         self._section(left, "Table Detection")
-        self._dropdown(left, "Detection method", "detection",
-                       ["Auto", "Lattice", "Stream", "Hybrid"])
+        self._dropdown(
+            left,
+            "Detection method",
+            "detection",
+            ["Auto", "Lattice", "Stream", "Hybrid"],
+        )
         self._labeled_entry(left, "Row tolerance (pt)", "row_tol")
         self._labeled_entry(left, "Column tolerance (pt)", "col_tol")
 
@@ -323,17 +358,33 @@ class PDFtoCSVTool(QWidget):
         self._section(left, "Table Filters")
         self._labeled_entry(left, "Min rows (skip smaller)", "min_rows")
         self._labeled_entry(left, "Min columns (skip smaller)", "min_cols")
-        self._dropdown(left, "Image-only pages", "image_only",
-                       ["Skip with warning", "Fail entirely"])
+        self._dropdown(
+            left,
+            "Image-only pages",
+            "image_only",
+            ["Skip with warning", "Fail entirely"],
+        )
 
         # ── Extraction Settings ───────────────────────────────────────────
         self._section(left, "Extraction Settings")
-        self._dropdown(left, "Header row", "header",
-                       ["Auto-detect", "First row is header", "No headers"])
-        self._dropdown(left, "Line breaks in cells", "linebreak",
-                       ["Replace with space", "Replace with custom",
-                        "Preserve (\\n in cell)", "Remove entirely"],
-                       on_change=self._on_linebreak_change)
+        self._dropdown(
+            left,
+            "Header row",
+            "header",
+            ["Auto-detect", "First row is header", "No headers"],
+        )
+        self._dropdown(
+            left,
+            "Line breaks in cells",
+            "linebreak",
+            [
+                "Replace with space",
+                "Replace with custom",
+                "Preserve (\\n in cell)",
+                "Remove entirely",
+            ],
+            on_change=self._on_linebreak_change,
+        )
 
         # Custom line-break row (hidden by default)
         self._custom_lb_widget = QWidget()
@@ -348,33 +399,53 @@ class PDFtoCSVTool(QWidget):
         clb_entry.setFixedHeight(28)
         clb_entry.setStyleSheet(
             f"background: {WHITE}; color: {G700}; border: 1px solid {G200}; "
-            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;")
+            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;"
+        )
         clb_h.addWidget(clb_entry, 1)
         self._widgets["custom_lb"] = clb_entry
         left.addWidget(self._custom_lb_widget)
         self._custom_lb_widget.hide()
 
-        self._dropdown(left, "Horizontal merged cells", "merged",
-                       ["First column only", "Duplicate across columns", "Leave empty"])
-        self._dropdown(left, "Vertical merged cells", "vert_merge",
-                       ["First row only", "Duplicate down rows", "Leave empty"])
+        self._dropdown(
+            left,
+            "Horizontal merged cells",
+            "merged",
+            ["First column only", "Duplicate across columns", "Leave empty"],
+        )
+        self._dropdown(
+            left,
+            "Vertical merged cells",
+            "vert_merge",
+            ["First row only", "Duplicate down rows", "Leave empty"],
+        )
         self._labeled_entry(left, "Empty cell marker", "empty_marker")
-        empty_hint = QLabel("  (text placed in empty merged cells; blank = leave empty)")
+        empty_hint = QLabel(
+            "  (text placed in empty merged cells; blank = leave empty)"
+        )
         empty_hint.setStyleSheet(f"color: {G400}; font: 10px 'Segoe UI';")
         empty_hint.setContentsMargins(18, 0, 18, 6)
         left.addWidget(empty_hint)
 
-        self._dropdown(left, "Strip cell whitespace", "strip_ws",
-                       ["Enabled", "Disabled"])
-        self._dropdown(left, "Unicode normalization", "unicode_norm",
-                       ["NFC (recommended)", "NFKC (compatibility)", "None"])
+        self._dropdown(
+            left, "Strip cell whitespace", "strip_ws", ["Enabled", "Disabled"]
+        )
+        self._dropdown(
+            left,
+            "Unicode normalization",
+            "unicode_norm",
+            ["NFC (recommended)", "NFKC (compatibility)", "None"],
+        )
         uni_hint = QLabel("  (NFC fixes invisible combining chars from PDF fonts)")
         uni_hint.setStyleSheet(f"color: {G400}; font: 10px 'Segoe UI';")
         uni_hint.setContentsMargins(18, 0, 18, 6)
         left.addWidget(uni_hint)
 
-        self._dropdown(left, "Type detection", "type_detect",
-                       ["Disabled", "Numbers only", "Dates only", "Numbers + Dates"])
+        self._dropdown(
+            left,
+            "Type detection",
+            "type_detect",
+            ["Disabled", "Numbers only", "Dates only", "Numbers + Dates"],
+        )
         type_warn = QLabel("  \u26a0 May alter leading zeros, zip codes, phone numbers")
         type_warn.setStyleSheet("color: #D97706; font: 10px 'Segoe UI';")
         type_warn.setContentsMargins(18, 0, 18, 6)
@@ -382,23 +453,34 @@ class PDFtoCSVTool(QWidget):
 
         # ── Output Settings ───────────────────────────────────────────────
         self._section(left, "Output Settings")
-        self._dropdown(left, "Delimiter", "delimiter",
-                       list(DELIMITER_MAP.keys()))
-        self._dropdown(left, "Encoding", "encoding",
-                       list(ENCODING_MAP.keys()))
-        self._dropdown(left, "Line endings", "line_ending",
-                       list(LINE_ENDING_MAP.keys()))
-        self._dropdown(left, "Multiple tables", "multi",
-                       ["Separate file per table", "Single file (concatenate)"])
-        self._dropdown(left, "Source metadata column", "source_meta",
-                       ["None", "Page number", "Table number", "Page + Table"])
+        self._dropdown(left, "Delimiter", "delimiter", list(DELIMITER_MAP.keys()))
+        self._dropdown(left, "Encoding", "encoding", list(ENCODING_MAP.keys()))
+        self._dropdown(
+            left, "Line endings", "line_ending", list(LINE_ENDING_MAP.keys())
+        )
+        self._dropdown(
+            left,
+            "Multiple tables",
+            "multi",
+            ["Separate file per table", "Single file (concatenate)"],
+        )
+        self._dropdown(
+            left,
+            "Source metadata column",
+            "source_meta",
+            ["None", "Page number", "Table number", "Page + Table"],
+        )
         meta_hint = QLabel("  (adds source column(s) in concatenated output)")
         meta_hint.setStyleSheet(f"color: {G400}; font: 10px 'Segoe UI';")
         meta_hint.setContentsMargins(18, 0, 18, 4)
         left.addWidget(meta_hint)
 
-        self._dropdown(left, "If file exists", "overwrite",
-                       ["Rename with suffix", "Overwrite", "Skip"])
+        self._dropdown(
+            left,
+            "If file exists",
+            "overwrite",
+            ["Rename with suffix", "Overwrite", "Skip"],
+        )
 
         # Output folder
         folder_row = QWidget()
@@ -412,14 +494,16 @@ class PDFtoCSVTool(QWidget):
         self._folder_entry.setFixedHeight(34)
         self._folder_entry.setStyleSheet(
             f"background: {WHITE}; color: {G700}; border: 1px solid {G200}; "
-            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;")
+            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;"
+        )
         fo_h.addWidget(self._folder_entry, 1)
         folder_btn = QPushButton("Browse")
         folder_btn.setFixedSize(72, 34)
         folder_btn.setStyleSheet(
             f"QPushButton {{background: transparent; color: {G700}; "
             f"border: 1px solid {G300}; border-radius: 6px; font: 13px 'Segoe UI';}} "
-            f"QPushButton:hover {{background: {G200};}}")
+            f"QPushButton:hover {{background: {G200};}}"
+        )
         folder_btn.clicked.connect(self._browse_folder)
         fo_h.addWidget(folder_btn)
         left.addWidget(folder_row)
@@ -442,7 +526,8 @@ class PDFtoCSVTool(QWidget):
             f"QPushButton {{background: {BLUE}; color: white; border-radius: 6px; "
             f"font: bold 14px 'Segoe UI';}} "
             f"QPushButton:hover {{background: {BLUE_HOVER};}} "
-            f"QPushButton:disabled {{background: {G300}; color: {G500};}}")
+            f"QPushButton:disabled {{background: {G300}; color: {G500};}}"
+        )
         self._extract_btn.clicked.connect(self._run_extraction)
         ew_v.addWidget(self._extract_btn)
         left.addWidget(extract_wrap)
@@ -458,7 +543,8 @@ class PDFtoCSVTool(QWidget):
         self._progress.setTextVisible(False)
         self._progress.setStyleSheet(
             f"QProgressBar {{background: {G200}; border-radius: 4px; border: none;}} "
-            f"QProgressBar::chunk {{background: {GREEN}; border-radius: 4px;}}")
+            f"QProgressBar::chunk {{background: {GREEN}; border-radius: 4px;}}"
+        )
         pw_v.addWidget(self._progress)
         left.addWidget(progress_wrap)
 
@@ -514,7 +600,8 @@ class PDFtoCSVTool(QWidget):
         prev_btn.setFixedSize(34, 30)
         prev_btn.setStyleSheet(
             f"QPushButton {{background: transparent; border-radius: 4px;}} "
-            f"QPushButton:hover {{background: {G200};}}")
+            f"QPushButton:hover {{background: {G200};}}"
+        )
         prev_btn.clicked.connect(self._prev_page)
         nav_h.addWidget(prev_btn)
 
@@ -524,7 +611,8 @@ class PDFtoCSVTool(QWidget):
         next_btn.setFixedSize(34, 30)
         next_btn.setStyleSheet(
             f"QPushButton {{background: transparent; border-radius: 4px;}} "
-            f"QPushButton:hover {{background: {G200};}}")
+            f"QPushButton:hover {{background: {G200};}}"
+        )
         next_btn.clicked.connect(self._next_page)
         nav_h.addWidget(next_btn)
 
@@ -547,11 +635,12 @@ class PDFtoCSVTool(QWidget):
         self._thumb_scroll = QScrollArea()
         self._thumb_scroll.setWidgetResizable(True)
         self._thumb_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self._thumb_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._thumb_scroll.setStyleSheet(
-            f"border: none; background: {G100};")
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._thumb_scroll.setStyleSheet(f"border: none; background: {G100};")
         strip_v.addWidget(self._thumb_scroll)
 
         self._thumb_inner = QWidget()
@@ -594,8 +683,14 @@ class PDFtoCSVTool(QWidget):
         h.addWidget(sep, 1)
         parent_lay.addWidget(row)
 
-    def _dropdown(self, parent_lay: QVBoxLayout, label: str, key: str,
-                  values: list, on_change=None):
+    def _dropdown(
+        self,
+        parent_lay: QVBoxLayout,
+        label: str,
+        key: str,
+        values: list,
+        on_change=None,
+    ):
         row = QWidget()
         row.setStyleSheet("background: transparent;")
         h = QHBoxLayout(row)
@@ -616,8 +711,9 @@ class PDFtoCSVTool(QWidget):
         self._widgets[key] = cb
         parent_lay.addWidget(row)
 
-    def _labeled_entry(self, parent_lay: QVBoxLayout, label: str, key: str,
-                       width: int = 80):
+    def _labeled_entry(
+        self, parent_lay: QVBoxLayout, label: str, key: str, width: int = 80
+    ):
         row = QWidget()
         row.setStyleSheet("background: transparent;")
         h = QHBoxLayout(row)
@@ -631,7 +727,8 @@ class PDFtoCSVTool(QWidget):
         entry.setFixedHeight(28)
         entry.setStyleSheet(
             f"background: {WHITE}; color: {G700}; border: 1px solid {G200}; "
-            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;")
+            f"border-radius: 4px; font: 12px 'Segoe UI'; padding: 0 6px;"
+        )
         h.addWidget(entry, 1)
         self._widgets[key] = entry
         parent_lay.addWidget(row)
@@ -657,8 +754,7 @@ class PDFtoCSVTool(QWidget):
     # ======================================================================
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF files (*.pdf)")
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF files (*.pdf)")
         if path:
             self._open_pdf(path)
 
@@ -676,12 +772,12 @@ class PDFtoCSVTool(QWidget):
         if self._doc:
             try:
                 self._doc.close()
-            except Exception:
+            except RuntimeError:
                 pass
         if self._pldoc:
             try:
                 self._pldoc.close()
-            except Exception:
+            except RuntimeError:
                 pass
         self._doc = None
         self._pldoc = None
@@ -690,34 +786,36 @@ class PDFtoCSVTool(QWidget):
         try:
             doc = fitz.open(path)
         except Exception as e:
-            QMessageBox.critical(self, "Cannot Open PDF",
-                                 f"Failed to open file:\n{e}")
+            QMessageBox.critical(self, "Cannot Open PDF", f"Failed to open file:\n{e}")
             return
 
         if doc.needs_pass:
             pw, ok = QInputDialog.getText(
-                self, "Password Required",
+                self,
+                "Password Required",
                 "This PDF is password-protected.\nEnter password:",
-                QLineEdit.EchoMode.Password)
+                QLineEdit.EchoMode.Password,
+            )
             if not ok:
                 doc.close()
                 return
             if not doc.authenticate(pw):
-                QMessageBox.critical(self, "Wrong Password",
-                                     "Incorrect password. Cannot open PDF.")
+                QMessageBox.critical(
+                    self, "Wrong Password", "Incorrect password. Cannot open PDF."
+                )
                 doc.close()
                 return
             self._password = pw
 
         if doc.page_count == 0:
-            QMessageBox.critical(self, "Empty PDF",
-                                 "This PDF contains no pages.")
+            QMessageBox.critical(self, "Empty PDF", "This PDF contains no pages.")
             doc.close()
             return
 
         if not self._detect_text_layer(doc):
             QMessageBox.warning(
-                self, "No Text Layer Detected",
+                self,
+                "No Text Layer Detected",
                 "This PDF appears to contain scanned images without an "
                 "extractable text layer.\n\n"
                 "OCR support will be added in a future release.\n"
@@ -730,8 +828,9 @@ class PDFtoCSVTool(QWidget):
             else:
                 self._pldoc = pdfplumber.open(path)
         except Exception as e:
-            QMessageBox.critical(self, "pdfplumber Error",
-                                 f"Could not open PDF with pdfplumber:\n{e}")
+            QMessageBox.critical(
+                self, "pdfplumber Error", f"Could not open PDF with pdfplumber:\n{e}"
+            )
             doc.close()
             return
 
@@ -749,8 +848,7 @@ class PDFtoCSVTool(QWidget):
         self._build_thumbnails()
         self._render_page_canvas()
         n = doc.page_count
-        self._status_lbl.setText(
-            f"{n} page{'s' if n != 1 else ''} loaded.")
+        self._status_lbl.setText(f"{n} page{'s' if n != 1 else ''} loaded.")
 
     def _detect_text_layer(self, doc) -> bool:
         sample_pages = min(3, doc.page_count)
@@ -798,7 +896,8 @@ class PDFtoCSVTool(QWidget):
             thumb_lbl.setFixedSize(self.THUMB_W, 110)
             thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             thumb_lbl.setStyleSheet(
-                f"background: {THUMB_BG}; border: 1px solid {G300};")
+                f"background: {THUMB_BG}; border: 1px solid {G300};"
+            )
             frame_v.addWidget(thumb_lbl, 0, Qt.AlignmentFlag.AlignHCenter)
 
             num_lbl = QLabel(str(i + 1))
@@ -809,8 +908,8 @@ class PDFtoCSVTool(QWidget):
             # Click handler
             idx_capture = i
             thumb_lbl.mousePressEvent = lambda e, idx=idx_capture: self._go_to_page(idx)
-            num_lbl.mousePressEvent  = lambda e, idx=idx_capture: self._go_to_page(idx)
-            frame.mousePressEvent    = lambda e, idx=idx_capture: self._go_to_page(idx)
+            num_lbl.mousePressEvent = lambda e, idx=idx_capture: self._go_to_page(idx)
+            frame.mousePressEvent = lambda e, idx=idx_capture: self._go_to_page(idx)
 
             self._thumb_h_lay.insertWidget(self._thumb_h_lay.count() - 1, frame)
             self._thumb_pixmaps.append((None, frame, thumb_lbl))
@@ -821,20 +920,24 @@ class PDFtoCSVTool(QWidget):
         if not self._doc:
             return
         start = self._thumb_render_next
-        end   = min(start + batch, self._total_pages)
+        end = min(start + batch, self._total_pages)
         for i in range(start, end):
             pm_old, frame, lbl = self._thumb_pixmaps[i]
             if pm_old is not None:
                 continue
             try:
                 pm = _render_thumb_qpixmap(self._doc, i, self.THUMB_W)
-            except Exception:
+            except RuntimeError:
                 continue
             self._thumb_pixmaps[i] = (pm, frame, lbl)
-            lbl.setPixmap(pm.scaled(
-                self.THUMB_W, 110,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
+            lbl.setPixmap(
+                pm.scaled(
+                    self.THUMB_W,
+                    110,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
         self._thumb_render_next = end
         if end < self._total_pages:
             QTimer.singleShot(0, self._render_thumb_batch)
@@ -844,20 +947,20 @@ class PDFtoCSVTool(QWidget):
     def _highlight_thumb(self, idx: int):
         if self._highlighted_thumb_frame is not None:
             try:
-                pm, frame, lbl = None, self._highlighted_thumb_frame, None
+                frame, lbl = self._highlighted_thumb_frame, None
                 for entry in self._thumb_pixmaps:
                     if entry[1] is self._highlighted_thumb_frame:
                         lbl = entry[2]
                         break
                 if lbl:
                     lbl.setStyleSheet(
-                        f"background: {THUMB_BG}; border: 1px solid {G300};")
-            except Exception:
+                        f"background: {THUMB_BG}; border: 1px solid {G300};"
+                    )
+            except RuntimeError:
                 pass
         if 0 <= idx < len(self._thumb_pixmaps):
             _, frame, lbl = self._thumb_pixmaps[idx]
-            lbl.setStyleSheet(
-                f"background: {THUMB_BG}; border: 2px solid {BLUE};")
+            lbl.setStyleSheet(f"background: {THUMB_BG}; border: 2px solid {BLUE};")
             self._highlighted_thumb_frame = frame
         else:
             self._highlighted_thumb_frame = None
@@ -871,17 +974,15 @@ class PDFtoCSVTool(QWidget):
             return
         cw = max(self._canvas.width(), 100)
         try:
-            pm, scale = _render_page_qpixmap(self._doc, self._current_page,
-                                              cw - 20)
-        except Exception:
+            pm, scale = _render_page_qpixmap(self._doc, self._current_page, cw - 20)
+        except RuntimeError:
             return
         self._page_pixmap = pm
         self._page_scale = scale
-        iw, ih = pm.width(), pm.height()
+        iw = pm.width()
         self._page_ox = (cw - iw) // 2
         self._page_oy = 10
-        self._page_lbl.setText(
-            f"Page {self._current_page + 1} / {self._total_pages}")
+        self._page_lbl.setText(f"Page {self._current_page + 1} / {self._total_pages}")
         self._draw_table_outlines()
         self._highlight_thumb(self._current_page)
         self._canvas.update()
@@ -893,7 +994,7 @@ class PDFtoCSVTool(QWidget):
         try:
             pl_page = self._pldoc.pages[self._current_page]
             tables = pl_page.find_tables(self._build_table_settings())
-        except Exception:
+        except (ValueError, RuntimeError):
             return
         self._table_bboxes = []
         for table in tables:
@@ -952,20 +1053,20 @@ class PDFtoCSVTool(QWidget):
             h_strat = "lines"
 
         return {
-            "vertical_strategy":         v_strat,
-            "horizontal_strategy":       h_strat,
-            "intersection_y_tolerance":  row_tol,
-            "intersection_x_tolerance":  col_tol,
-            "snap_y_tolerance":          row_tol,
-            "snap_x_tolerance":          col_tol,
-            "edge_min_length":           3,
-            "min_words_vertical":        1,
-            "min_words_horizontal":      1,
-            "keep_blank_chars":          False,
-            "text_tolerance":            3,
-            "text_x_tolerance":          3,
-            "text_y_tolerance":          3,
-            "explicit_vertical_lines":   [],
+            "vertical_strategy": v_strat,
+            "horizontal_strategy": h_strat,
+            "intersection_y_tolerance": row_tol,
+            "intersection_x_tolerance": col_tol,
+            "snap_y_tolerance": row_tol,
+            "snap_x_tolerance": col_tol,
+            "edge_min_length": 3,
+            "min_words_vertical": 1,
+            "min_words_horizontal": 1,
+            "keep_blank_chars": False,
+            "text_tolerance": 3,
+            "text_x_tolerance": 3,
+            "text_y_tolerance": 3,
+            "explicit_vertical_lines": [],
             "explicit_horizontal_lines": [],
         }
 
@@ -986,14 +1087,18 @@ class PDFtoCSVTool(QWidget):
                 lo_i = int(lo.strip()) - 1
                 hi_i = int(hi.strip()) - 1
                 if lo_i < 0 or hi_i >= total or lo_i > hi_i:
-                    raise ValueError(f"Page range '{part}' is out of bounds "
-                                     f"(document has {total} pages).")
+                    raise ValueError(
+                        f"Page range '{part}' is out of bounds "
+                        f"(document has {total} pages)."
+                    )
                 pages.update(range(lo_i, hi_i + 1))
             else:
                 idx = int(part) - 1
                 if idx < 0 or idx >= total:
-                    raise ValueError(f"Page number {part} is out of bounds "
-                                     f"(document has {total} pages).")
+                    raise ValueError(
+                        f"Page number {part} is out of bounds "
+                        f"(document has {total} pages)."
+                    )
                 pages.add(idx)
         return sorted(pages)
 
@@ -1033,14 +1138,14 @@ class PDFtoCSVTool(QWidget):
 
     def _process_table(self, raw: list) -> list:
         """Clean a raw pdfplumber table (list of rows, each row a list of cells)."""
-        lb_mode      = self._get("linebreak")
-        custom_lb    = self._get("custom_lb")
+        lb_mode = self._get("linebreak")
+        custom_lb = self._get("custom_lb")
         merge_h_mode = self._get("merged")
         merge_v_mode = self._get("vert_merge")
         empty_marker = self._get("empty_marker")
-        strip_ws     = self._get("strip_ws") == "Enabled"
-        uni_norm     = self._get("unicode_norm")
-        type_detect  = self._get("type_detect")
+        strip_ws = self._get("strip_ws") == "Enabled"
+        uni_norm = self._get("unicode_norm")
+        type_detect = self._get("type_detect")
 
         rows: list = []
 
@@ -1076,13 +1181,21 @@ class PDFtoCSVTool(QWidget):
                     text = text.strip()
 
                 # Smart quotes → straight quotes
-                text = (text.replace("\u2018", "'").replace("\u2019", "'")
-                            .replace("\u201c", '"').replace("\u201d", '"'))
+                text = (
+                    text.replace("\u2018", "'")
+                    .replace("\u2019", "'")
+                    .replace("\u201c", '"')
+                    .replace("\u201d", '"')
+                )
 
                 # Ligature expansion
-                text = (text.replace("\ufb01", "fi").replace("\ufb02", "fl")
-                            .replace("\ufb00", "ff").replace("\ufb03", "ffi")
-                            .replace("\ufb04", "ffl"))
+                text = (
+                    text.replace("\ufb01", "fi")
+                    .replace("\ufb02", "fl")
+                    .replace("\ufb00", "ff")
+                    .replace("\ufb03", "ffi")
+                    .replace("\ufb04", "ffl")
+                )
 
                 # Remove control characters (except standard whitespace)
                 text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
@@ -1120,7 +1233,7 @@ class PDFtoCSVTool(QWidget):
         # Third pass: type detection (opt-in)
         if type_detect != "Disabled":
             do_numbers = "Numbers" in type_detect
-            do_dates   = "Dates"   in type_detect
+            do_dates = "Dates" in type_detect
             rows = [
                 [self._convert_cell_type(c, do_numbers, do_dates) for c in row]
                 for row in rows
@@ -1132,11 +1245,17 @@ class PDFtoCSVTool(QWidget):
 
     # Date formats attempted in order (most specific first)
     _DATE_FORMATS = [
-        "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d",
-        "%d-%m-%Y", "%m-%d-%Y",
-        "%d.%m.%Y", "%m.%d.%Y",
-        "%d %b %Y", "%d %B %Y",
-        "%b %d, %Y", "%B %d, %Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%m-%d-%Y",
+        "%d.%m.%Y",
+        "%m.%d.%Y",
+        "%d %b %Y",
+        "%d %B %Y",
+        "%b %d, %Y",
+        "%B %d, %Y",
         "%Y/%m/%d",
     ]
 
@@ -1193,8 +1312,7 @@ class PDFtoCSVTool(QWidget):
         return str(val)
 
     @classmethod
-    def _convert_cell_type(cls, text: str,
-                            do_numbers: bool, do_dates: bool) -> str:
+    def _convert_cell_type(cls, text: str, do_numbers: bool, do_dates: bool) -> str:
         """Convert a cell string to its canonical type representation if possible."""
         if not text.strip():
             return text
@@ -1263,25 +1381,29 @@ class PDFtoCSVTool(QWidget):
     # ======================================================================
 
     def _write_csv(self, rows: list, path: str) -> None:
-        enc_name    = self._get("encoding")
-        encoding    = ENCODING_MAP.get(enc_name, "utf-8-sig")
-        delim       = DELIMITER_MAP.get(self._get("delimiter"), ",")
+        enc_name = self._get("encoding")
+        encoding = ENCODING_MAP.get(enc_name, "utf-8-sig")
+        delim = DELIMITER_MAP.get(self._get("delimiter"), ",")
         line_ending = LINE_ENDING_MAP.get(self._get("line_ending"), os.linesep)
 
         # Use io.open so we can control the line terminator precisely.
         # csv.writer's newline="" suppresses its own line endings; we add ours.
         with open(path, "w", newline="", encoding=encoding, errors="replace") as f:
-            writer = csv.writer(f, delimiter=delim, quoting=csv.QUOTE_MINIMAL,
-                                lineterminator=line_ending)
+            writer = csv.writer(
+                f,
+                delimiter=delim,
+                quoting=csv.QUOTE_MINIMAL,
+                lineterminator=line_ending,
+            )
             writer.writerows(rows)
 
     # ======================================================================
     # SOURCE METADATA INJECTION
     # ======================================================================
 
-    def _add_source_metadata(self, rows: list,
-                              page_num: int, table_num: int,
-                              is_header: bool) -> list:
+    def _add_source_metadata(
+        self, rows: list, page_num: int, table_num: int, is_header: bool
+    ) -> list:
         """
         Prepend source column(s) to every row.
         page_num and table_num are 1-based for display.
@@ -1293,14 +1415,17 @@ class PDFtoCSVTool(QWidget):
 
         result = []
         for i, row in enumerate(rows):
-            is_hdr_row = (is_header and i == 0)
+            is_hdr_row = is_header and i == 0
             if meta_mode == "Page number":
                 prefix = ["Source page"] if is_hdr_row else [str(page_num)]
             elif meta_mode == "Table number":
                 prefix = ["Source table"] if is_hdr_row else [str(table_num)]
             else:  # "Page + Table"
-                prefix = (["Source page", "Source table"] if is_hdr_row
-                           else [str(page_num), str(table_num)])
+                prefix = (
+                    ["Source page", "Source table"]
+                    if is_hdr_row
+                    else [str(page_num), str(table_num)]
+                )
             result.append(prefix + list(row))
         return result
 
@@ -1322,8 +1447,10 @@ class PDFtoCSVTool(QWidget):
             return None
         min_c = min(unique_counts)
         max_c = max(unique_counts)
-        return (f"Inconsistent column count: rows range from {min_c} to {max_c} columns. "
-                f"Some cells may be misaligned.")
+        return (
+            f"Inconsistent column count: rows range from {min_c} to {max_c} columns. "
+            f"Some cells may be misaligned."
+        )
 
     # ======================================================================
     # EXTRACTION PIPELINE
@@ -1331,32 +1458,30 @@ class PDFtoCSVTool(QWidget):
 
     def _run_extraction(self):
         if not self._doc or not self._pldoc:
-            QMessageBox.warning(self, "No File",
-                                "Please open a PDF file first.")
+            QMessageBox.warning(self, "No File", "Please open a PDF file first.")
             return
         if not self.output_dir:
-            QMessageBox.warning(self, "No Output Folder",
-                                "Please select an output folder.")
+            QMessageBox.warning(
+                self, "No Output Folder", "Please select an output folder."
+            )
             return
 
         # Parse page range
         try:
-            pages = self._parse_page_range(self._get("range"),
-                                           self._total_pages)
+            pages = self._parse_page_range(self._get("range"), self._total_pages)
         except ValueError as e:
             QMessageBox.critical(self, "Invalid Page Range", str(e))
             return
 
         if not pages:
-            QMessageBox.warning(self, "Empty Selection",
-                                "No pages to process.")
+            QMessageBox.warning(self, "Empty Selection", "No pages to process.")
             return
 
-        base_name  = os.path.splitext(os.path.basename(self.pdf_path))[0]
+        base_name = os.path.splitext(os.path.basename(self.pdf_path))[0]
         multi_mode = self._get("multi")
-        method     = self._get("detection")
-        settings   = self._build_table_settings(method)
-        meta_mode  = self._get("source_meta")
+        method = self._get("detection")
+        settings = self._build_table_settings(method)
+        meta_mode = self._get("source_meta")
         image_only_policy = self._get("image_only")
 
         # Disable button during extraction
@@ -1368,13 +1493,14 @@ class PDFtoCSVTool(QWidget):
         report_lines.append("=== Extraction Complete ===\n")
         report_lines.append(f"Input:  {os.path.basename(self.pdf_path)}")
         report_lines.append(f"Output: {self.output_dir}")
-        report_lines.append(f"Pages processed: {len(pages)}"
-                             f"  (pages {pages[0]+1}–{pages[-1]+1})\n")
+        report_lines.append(
+            f"Pages processed: {len(pages)}  (pages {pages[0] + 1}–{pages[-1] + 1})\n"
+        )
 
-        all_table_rows: list = []    # for single-file mode
-        total_tables   = 0
-        total_rows     = 0
-        skipped_files  = 0
+        all_table_rows: list = []  # for single-file mode
+        total_tables = 0
+        total_rows = 0
+        skipped_files = 0
         warnings: list = []
         output_files: list = []
 
@@ -1383,32 +1509,33 @@ class PDFtoCSVTool(QWidget):
         # Each entry: (page_idx, table_num_on_page, final_rows, has_header)
 
         for pg_idx in pages:
-            self._status_lbl.setText(
-                f"Detecting tables on page {pg_idx + 1}…")
+            self._status_lbl.setText(f"Detecting tables on page {pg_idx + 1}…")
             QApplication.processEvents()
 
             # Image-only page check
             if self._page_is_image_only(pg_idx):
                 if image_only_policy == "Fail entirely":
                     QMessageBox.critical(
-                        self, "Image-Only Page",
-                        f"Page {pg_idx+1} contains only scanned images and "
+                        self,
+                        "Image-Only Page",
+                        f"Page {pg_idx + 1} contains only scanned images and "
                         "cannot be extracted.\n\nChange 'Image-only pages' to "
-                        "'Skip with warning' to continue past such pages."
+                        "'Skip with warning' to continue past such pages.",
                     )
                     self._extract_btn.setEnabled(True)
                     self._extract_btn.setText("Extract to CSV")
                     return
                 else:
                     warnings.append(
-                        f"Page {pg_idx+1}: image-only page — no text layer, skipped.")
+                        f"Page {pg_idx + 1}: image-only page — no text layer, skipped."
+                    )
                     continue
 
             try:
                 pl_page = self._pldoc.pages[pg_idx]
                 raw_tables = pl_page.extract_tables(settings)
             except Exception as e:
-                warnings.append(f"Page {pg_idx+1}: extraction error — {e}")
+                warnings.append(f"Page {pg_idx + 1}: extraction error — {e}")
                 continue
 
             # Auto fallback: if lines strategy found nothing, try text
@@ -1418,13 +1545,14 @@ class PDFtoCSVTool(QWidget):
                     raw_tables = pl_page.extract_tables(fallback)
                     if raw_tables:
                         warnings.append(
-                            f"Page {pg_idx+1}: lattice detection found no tables, "
-                            "fell back to stream mode.")
-                except Exception:
+                            f"Page {pg_idx + 1}: lattice detection found no tables, "
+                            "fell back to stream mode."
+                        )
+                except (ValueError, RuntimeError):
                     pass
 
             if not raw_tables:
-                warnings.append(f"Page {pg_idx+1}: no tables detected (skipped).")
+                warnings.append(f"Page {pg_idx + 1}: no tables detected (skipped).")
                 continue
 
             for tbl_idx, raw in enumerate(raw_tables):
@@ -1434,9 +1562,10 @@ class PDFtoCSVTool(QWidget):
                 # Minimum size filter
                 if not self._passes_size_filter(rows):
                     warnings.append(
-                        f"Page {pg_idx+1} table {tbl_idx+1}: "
+                        f"Page {pg_idx + 1} table {tbl_idx + 1}: "
                         f"too small ({len(rows)} rows × "
-                        f"{max(len(r) for r in rows) if rows else 0} cols), skipped.")
+                        f"{max(len(r) for r in rows) if rows else 0} cols), skipped."
+                    )
                     continue
 
                 if has_hdr:
@@ -1447,7 +1576,8 @@ class PDFtoCSVTool(QWidget):
                 # Add source metadata columns (for concatenated mode)
                 if multi_mode == "Single file (concatenate)" and meta_mode != "None":
                     final_rows = self._add_source_metadata(
-                        final_rows, pg_idx + 1, tbl_idx + 1, has_hdr)
+                        final_rows, pg_idx + 1, tbl_idx + 1, has_hdr
+                    )
 
                 page_table_data.append((pg_idx, tbl_idx + 1, final_rows, has_hdr))
 
@@ -1461,17 +1591,17 @@ class PDFtoCSVTool(QWidget):
 
             self._progress.setValue(int((i + 1) / max(n_total, 1) * 100))
             self._status_lbl.setText(
-                f"Writing table {i+1}/{n_total} "
-                f"(page {pg_idx+1}, table {tbl_num})…")
+                f"Writing table {i + 1}/{n_total} (page {pg_idx + 1}, table {tbl_num})…"
+            )
             QApplication.processEvents()
 
             # Column consistency check
             col_warn = self._check_column_consistency(final_rows)
             if col_warn:
-                warnings.append(f"Page {pg_idx+1} table {tbl_num}: {col_warn}")
+                warnings.append(f"Page {pg_idx + 1} table {tbl_num}: {col_warn}")
 
             if multi_mode == "Separate file per table":
-                fname = f"{base_name}_page{pg_idx+1}_table{tbl_num}.csv"
+                fname = f"{base_name}_page{pg_idx + 1}_table{tbl_num}.csv"
                 fpath_raw = os.path.join(self.output_dir, fname)
                 fpath = self._resolve_output_path(fpath_raw)
 
@@ -1479,8 +1609,9 @@ class PDFtoCSVTool(QWidget):
                     # Skipped due to overwrite policy
                     skipped_files += 1
                     warnings.append(
-                        f"Page {pg_idx+1} table {tbl_num}: "
-                        f"'{fname}' already exists — skipped.")
+                        f"Page {pg_idx + 1} table {tbl_num}: "
+                        f"'{fname}' already exists — skipped."
+                    )
                     continue
 
                 fname_actual = os.path.basename(fpath)
@@ -1489,15 +1620,16 @@ class PDFtoCSVTool(QWidget):
                     output_files.append(fname_actual)
                 except Exception as e:
                     warnings.append(
-                        f"Page {pg_idx+1} table {tbl_num}: write error — {e}")
+                        f"Page {pg_idx + 1} table {tbl_num}: write error — {e}"
+                    )
                     continue
 
-                report_lines.append(f"Table {total_tables} — page {pg_idx+1}")
-                report_lines.append(
-                    f"  Dimensions: {n_rows} rows × {n_cols} columns")
+                report_lines.append(f"Table {total_tables} — page {pg_idx + 1}")
+                report_lines.append(f"  Dimensions: {n_rows} rows × {n_cols} columns")
                 if fname_actual != fname:
                     report_lines.append(
-                        f"  Output: {fname_actual}  (renamed — original existed)")
+                        f"  Output: {fname_actual}  (renamed — original existed)"
+                    )
                 else:
                     report_lines.append(f"  Output: {fname_actual}\n")
 
@@ -1506,9 +1638,8 @@ class PDFtoCSVTool(QWidget):
                     all_table_rows.append([])  # blank separator row
                 all_table_rows.extend(final_rows)
 
-                report_lines.append(f"Table {total_tables} — page {pg_idx+1}")
-                report_lines.append(
-                    f"  Dimensions: {n_rows} rows × {n_cols} columns\n")
+                report_lines.append(f"Table {total_tables} — page {pg_idx + 1}")
+                report_lines.append(f"  Dimensions: {n_rows} rows × {n_cols} columns\n")
 
         # Write combined file if single-file mode
         if multi_mode == "Single file (concatenate)" and all_table_rows:
@@ -1519,7 +1650,8 @@ class PDFtoCSVTool(QWidget):
             if fpath is None:
                 skipped_files += 1
                 warnings.append(
-                    f"'{fname}' already exists — skipped (overwrite policy).")
+                    f"'{fname}' already exists — skipped (overwrite policy)."
+                )
             else:
                 fname_actual = os.path.basename(fpath)
                 try:
@@ -1527,32 +1659,32 @@ class PDFtoCSVTool(QWidget):
                     output_files.append(fname_actual)
                     if fname_actual != fname:
                         report_lines.append(
-                            f"\nOutput: {fname_actual}  (renamed — original existed)")
+                            f"\nOutput: {fname_actual}  (renamed — original existed)"
+                        )
                     else:
                         report_lines.append(f"\nOutput: {fname_actual}")
                 except Exception as e:
                     warnings.append(f"Write error for combined file: {e}")
 
         # Summary
-        report_lines.append(f"\n── Summary ──────────────────────")
+        report_lines.append("\n── Summary ──────────────────────")
         report_lines.append(f"Tables found:    {total_tables}")
         report_lines.append(f"Total rows:      {total_rows}")
         report_lines.append(f"Output files:    {len(output_files)}")
         if skipped_files:
-            report_lines.append(
-                f"Files skipped:   {skipped_files} (already existed)")
+            report_lines.append(f"Files skipped:   {skipped_files} (already existed)")
 
         if warnings:
-            report_lines.append(f"\n── Warnings ─────────────────────")
+            report_lines.append("\n── Warnings ─────────────────────")
             for w in warnings:
                 report_lines.append(f"  \u2022 {w}")
 
         if not output_files:
             report_lines.append("\n\u26a0 No CSV files were created.")
+            report_lines.append("  The PDF may not contain extractable tables.")
             report_lines.append(
-                "  The PDF may not contain extractable tables.")
-            report_lines.append(
-                "  Try changing the Detection Method (Stream or Hybrid).")
+                "  Try changing the Detection Method (Stream or Hybrid)."
+            )
 
         self._extract_btn.setEnabled(True)
         self._extract_btn.setText("Extract to CSV")
@@ -1561,7 +1693,8 @@ class PDFtoCSVTool(QWidget):
         n_f = len(output_files)
         self._status_lbl.setText(
             f"Done. {n_t} table{'s' if n_t != 1 else ''} "
-            f"extracted to {n_f} file{'s' if n_f != 1 else ''}.")
+            f"extracted to {n_f} file{'s' if n_f != 1 else ''}."
+        )
 
         self._show_report("\n".join(report_lines), self.output_dir)
 
@@ -1591,7 +1724,8 @@ class PDFtoCSVTool(QWidget):
         lbl = QLabel(text)
         lbl.setWordWrap(True)
         lbl.setStyleSheet(
-            f"color: {G700}; font: 12px 'Courier New'; background: transparent;")
+            f"color: {G700}; font: 12px 'Courier New'; background: transparent;"
+        )
         inner_lay.addWidget(lbl)
         inner_lay.addStretch()
         scroll.setWidget(inner)
@@ -1599,8 +1733,7 @@ class PDFtoCSVTool(QWidget):
 
         btn_bar = QFrame()
         btn_bar.setFixedHeight(50)
-        btn_bar.setStyleSheet(
-            f"background: {G100}; border-top: 1px solid {G200};")
+        btn_bar.setStyleSheet(f"background: {G100}; border-top: 1px solid {G200};")
         btn_bar_lay = QHBoxLayout(btn_bar)
         btn_bar_lay.setContentsMargins(16, 8, 16, 8)
 
@@ -1609,7 +1742,8 @@ class PDFtoCSVTool(QWidget):
         open_btn.setStyleSheet(
             f"QPushButton {{background: {BLUE}; color: white; border-radius: 6px; "
             f"font: 13px 'Segoe UI';}} "
-            f"QPushButton:hover {{background: {BLUE_HOVER};}}")
+            f"QPushButton:hover {{background: {BLUE_HOVER};}}"
+        )
         open_btn.clicked.connect(lambda: self._open_folder(output_dir))
         btn_bar_lay.addWidget(open_btn)
 
@@ -1618,7 +1752,8 @@ class PDFtoCSVTool(QWidget):
         back_btn.setStyleSheet(
             f"QPushButton {{background: transparent; color: {G700}; "
             f"border: 1px solid {G300}; border-radius: 6px; font: 13px 'Segoe UI';}} "
-            f"QPushButton:hover {{background: {G200};}}")
+            f"QPushButton:hover {{background: {G200};}}"
+        )
         back_btn.clicked.connect(self._back_to_preview)
         btn_bar_lay.addWidget(back_btn)
         btn_bar_lay.addStretch()
@@ -1648,23 +1783,22 @@ class PDFtoCSVTool(QWidget):
             else:
                 subprocess.Popen(["xdg-open", path])
         except Exception as e:
-            QMessageBox.critical(self, "Error",
-                                 f"Could not open folder:\n{e}")
+            QMessageBox.critical(self, "Error", f"Could not open folder:\n{e}")
 
     def cleanup(self):
         if self._thumb_timer is not None:
             try:
                 self._thumb_timer.stop()
-            except Exception:
+            except RuntimeError:
                 pass
             self._thumb_timer = None
         if self._doc is not None:
             try:
                 self._doc.close()
-            except Exception:
+            except RuntimeError:
                 pass
         if self._pldoc is not None:
             try:
                 self._pldoc.close()
-            except Exception:
+            except RuntimeError:
                 pass

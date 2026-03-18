@@ -14,8 +14,7 @@ def _fitz_pix_to_qpixmap(pix) -> QPixmap:
         data = pix.samples_mv
     except AttributeError:
         data = pix.samples
-    img = QImage(data, pix.width, pix.height, pix.stride,
-                 QImage.Format.Format_RGB888)
+    img = QImage(data, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
     return QPixmap.fromImage(img.copy())
 
 
@@ -46,7 +45,11 @@ class _WheelToHScroll(QObject):
         sa.viewport().installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        if obj is self._sa.viewport() and event.type() == QEvent.Type.Wheel:
+        try:
+            viewport = self._sa.viewport()
+        except RuntimeError:
+            return super().eventFilter(obj, event)
+        if obj is viewport and event.type() == QEvent.Type.Wheel:
             delta = event.angleDelta().y()
             sb = self._sa.horizontalScrollBar()
             sb.setValue(sb.value() - delta // 4)
