@@ -645,19 +645,60 @@ class PDFCanvas(QWidget):
     # Mouse events
     # ------------------------------------------------------------------
 
+    def _link_at_pos(self, widget_pos):
+        vt = self._vt
+        if not hasattr(vt, "_inv_mat") or vt._inv_mat is None:
+            return None
+        if not fitz:
+            return None
+        cx, cy = widget_pos.x(), widget_pos.y()
+        px, py = vt._canvas_to_pdf(cx, cy)
+        pt = fitz.Point(px, py)
+        for rect, link in self._pane._link_cache:
+            if rect.contains(pt):
+                return link
+        return None
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()
-            self._vt._on_mouse_down(pos.x(), pos.y())
+            link = self._link_at_pos(pos)
+            if link is not None:
+                self._pending_link = link
+                self._link_press_pos = pos
+            else:
+                self._pending_link = None
+                self._vt._on_mouse_down(pos.x(), pos.y())
 
     def mouseMoveEvent(self, event):
+        pos = event.position()
+        link_hit = self._link_at_pos(pos)
+        if link_hit:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.unsetCursor()
         if event.buttons() & Qt.MouseButton.LeftButton:
-            pos = event.position()
-            self._vt._on_mouse_move(pos.x(), pos.y())
+            if getattr(self, "_pending_link", None) is not None:
+                dist = (pos - self._link_press_pos).manhattanLength()
+                if dist > 4:
+                    self._pending_link = None
+                    self._vt._on_mouse_down(
+                        self._link_press_pos.x(), self._link_press_pos.y()
+                    )
+                    self._vt._on_mouse_move(pos.x(), pos.y())
+            else:
+                self._vt._on_mouse_move(pos.x(), pos.y())
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()
+            pending = getattr(self, "_pending_link", None)
+            if pending is not None:
+                dist = (pos - self._link_press_pos).manhattanLength()
+                self._pending_link = None
+                if dist <= 4:
+                    self._pane._fire_link(pending)
+                    return
             self._vt._on_mouse_up(pos.x(), pos.y())
 
     def mouseDoubleClickEvent(self, event):
@@ -1037,6 +1078,34 @@ class _RenderPane(QWidget):
         self._current_page = 0
         self._is_modified = False
         self.page_changed.emit(0)
+
+    def _update_link_cache(self):
+        self._link_cache = []
+        if self._doc is None:
+            return
+        try:
+            page = self._doc[self._current_page]
+            for link in page.get_links():
+                self._link_cache.append((link["from"], link))
+        except Exception:
+            pass
+
+    def _fire_link(self, link: dict):
+        import fitz as _fitz
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+
+        kind = link.get("kind", -1)
+        if kind == _fitz.LINK_URI:
+            QDesktopServices.openUrl(QUrl(link.get("uri", "")))
+        elif kind == _fitz.LINK_GOTO:
+            target = link.get("page", 0)
+            if 0 <= target < self._page_count:
+                self._current_page = target
+                self.page_changed.emit(target)
+                self._view_tool._show_page(target)
+        else:
+            logger.debug("unhandled link: %s", link)
 
     def cleanup(self):
         self._render_gen = -1
@@ -3133,6 +3202,7 @@ class ViewTool(QWidget):
         self._page_ih = result["page_ih"]
         self._canvas.setFixedSize(result["canvas_w"], result["canvas_h"])
         self._canvas.set_pixmap(pm1, pm2)
+        self._pane._update_link_cache()
         self._draw_form_widgets()
 
     def _escape(self):
