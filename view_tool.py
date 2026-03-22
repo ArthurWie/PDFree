@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QGridLayout,
     QColorDialog,
+    QTabWidget,
 )
 from PySide6.QtCore import (
     Qt,
@@ -1022,6 +1023,21 @@ class _RenderPane(QWidget):
     def _build_ui(self):
         self._canvas = PDFCanvas(self)
 
+    def load(self, path: str):
+        try:
+            if self._doc is not None:
+                self._doc.close()
+            doc = fitz.open(path)
+        except Exception as e:
+            self.load_failed.emit(str(e))
+            return
+        self._doc = doc
+        self._path = str(Path(path).resolve())
+        self._page_count = doc.page_count
+        self._current_page = 0
+        self._is_modified = False
+        self.page_changed.emit(0)
+
     def cleanup(self):
         self._render_gen = -1
         if not QThreadPool.globalInstance().waitForDone(5000):
@@ -1053,15 +1069,21 @@ class ViewTool(QWidget):
 
     @property
     def active_pane(self):
+        if hasattr(self, "_tab_widget") and self._tab_widget is not None:
+            idx = self._tab_widget.currentIndex()
+            if 0 <= idx < len(self._panes):
+                return self._panes[idx]
         return self._pane
 
     @property
     def _modified(self):
+        if hasattr(self, "_panes") and self._panes:
+            return any(p.is_modified for p in self._panes)
         return self._pane.is_modified
 
     @_modified.setter
     def _modified(self, val):
-        self._pane._is_modified = val
+        self.active_pane._is_modified = val
 
     @property
     def doc(self):
@@ -1221,6 +1243,9 @@ class ViewTool(QWidget):
 
         # _pane must be created before any property access
         self._pane = _RenderPane(self)
+
+        # Multi-tab state
+        self._panes: list = []
 
         if fitz is None:
             lay = QVBoxLayout(self)
@@ -1846,6 +1871,14 @@ class ViewTool(QWidget):
         # Install viewport resize filter
         self._vp_filter = _ViewportFilter(self)
         self._scroll_area.viewport().installEventFilter(self._vp_filter)
+
+        # Tab widget for multi-document support (hidden until first file opened)
+        self._tab_widget = QTabWidget()
+        self._tab_widget.setTabsClosable(True)
+        self._tab_widget.setMovable(False)
+        self._tab_widget.tabCloseRequested.connect(self._close_tab)
+        self._tab_widget.currentChanged.connect(self._on_tab_changed)
+        self._tab_widget.setVisible(False)
 
     # -- Reusable button factories ------------------------------------
 
@@ -4180,7 +4213,46 @@ class ViewTool(QWidget):
     # CLEANUP
     # ==================================================================
 
+    # ==================================================================
+    # MULTI-DOCUMENT / TAB SUPPORT
+    # ==================================================================
+
+    def open_file(self, path: str):
+        canonical = str(Path(path).resolve())
+        for i, pane in enumerate(self._panes):
+            if str(Path(pane.path).resolve()) == canonical:
+                self._tab_widget.setCurrentIndex(i)
+                return
+        pane = _RenderPane(self)
+        pane.load(path)
+        label = self._make_tab_label(path, False)
+        idx = self._tab_widget.addTab(pane, label)
+        self._panes.append(pane)
+        self._tab_widget.setCurrentIndex(idx)
+        self._tab_widget.setTabToolTip(idx, path)
+        self._tab_widget.setVisible(True)
+
+    def _make_tab_label(self, path: str, modified: bool) -> str:
+        name = Path(path).stem
+        if len(name) > 20:
+            name = name[:20] + "\u2026"
+        return ("\u2022 " if modified else "") + name
+
+    def _close_tab(self, index: int):
+        if 0 <= index < len(self._panes):
+            pane = self._panes.pop(index)
+            pane.cleanup()
+            self._tab_widget.removeTab(index)
+        if not self._panes:
+            self._tab_widget.setVisible(False)
+
+    def _on_tab_changed(self, index: int):
+        pass
+
     def cleanup(self):
+        for pane in list(self._panes):
+            pane.cleanup()
+        self._panes.clear()
         self._pane.cleanup()
         for p in self._temp_files:
             try:
