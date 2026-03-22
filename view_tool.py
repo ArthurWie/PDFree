@@ -4276,7 +4276,9 @@ class ViewTool(QWidget):
             clicked = box.clickedButton()
             if clicked == save_btn:
                 self._tab_widget.setCurrentIndex(index)
-                pane._save_pdf()
+                pane._view_tool._save_pdf()
+                if pane.is_modified:
+                    return
             elif clicked == discard_btn:
                 pass
             else:
@@ -4333,7 +4335,10 @@ class ViewTool(QWidget):
                 if pane.is_modified:
                     self._tab_widget.setCurrentIndex(i)
                     try:
-                        pane._save_pdf()
+                        pane._view_tool._save_pdf()
+                        if pane.is_modified:
+                            event.ignore()
+                            return
                     except Exception as e:
                         QMessageBox.critical(self, "Save Failed", str(e))
                         event.ignore()
