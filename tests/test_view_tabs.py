@@ -125,3 +125,133 @@ def test_cleanup_closes_all_panes(qapp, pdf_file, pdf_file2):
     # Docs should be closed
     assert pane0._doc is None
     assert pane1._doc is None
+
+
+def test_close_unmodified_tab_no_dialog(qapp, pdf_file, monkeypatch):
+    """Unmodified tab closes immediately without showing a dialog."""
+    from view_tool import ViewTool
+    from PySide6.QtWidgets import QMessageBox
+    dialog_shown = []
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: dialog_shown.append(True) or QMessageBox.StandardButton.Discard)
+    vt = ViewTool()
+    vt.open_file(pdf_file)
+    vt._close_tab(0)
+    assert len(dialog_shown) == 0
+    assert vt._tab_widget.count() == 0
+    vt.cleanup()
+
+
+def test_close_modified_tab_discard_closes_tab(qapp, pdf_file, monkeypatch):
+    """Modified tab: clicking Discard closes the tab without saving."""
+    from view_tool import ViewTool
+    from PySide6.QtWidgets import QMessageBox
+
+    def fake_exec(self):
+        # simulate Discard by storing the discard button reference
+        self._fake_clicked = self._discard_btn
+        return 0
+
+    def fake_clicked_button(self):
+        return getattr(self, "_fake_clicked", None)
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton", fake_clicked_button)
+
+    vt = ViewTool()
+    vt.open_file(pdf_file)
+    vt._tab_widget.widget(0)._is_modified = True
+    vt._close_tab(0)
+    assert vt._tab_widget.count() == 0
+    vt.cleanup()
+
+
+def test_close_modified_tab_cancel_keeps_tab(qapp, pdf_file, monkeypatch):
+    """Modified tab: clicking Cancel keeps the tab open."""
+    from view_tool import ViewTool
+    from PySide6.QtWidgets import QMessageBox
+
+    def fake_exec(self):
+        # simulate Cancel — clickedButton returns something that is neither save nor discard
+        self._fake_clicked = None
+        return 0
+
+    def fake_clicked_button(self):
+        return None
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton", fake_clicked_button)
+
+    vt = ViewTool()
+    vt.open_file(pdf_file)
+    vt._tab_widget.widget(0)._is_modified = True
+    vt._close_tab(0)
+    assert vt._tab_widget.count() == 1
+    vt.cleanup()
+
+
+def test_quit_with_no_unsaved_accepts_event(qapp, pdf_file):
+    """closeEvent accepts normally when no panes are modified."""
+    from view_tool import ViewTool
+    from PySide6.QtGui import QCloseEvent
+    vt = ViewTool()
+    vt.open_file(pdf_file)
+    event = QCloseEvent()
+    vt.closeEvent(event)
+    assert event.isAccepted()
+    vt.cleanup()
+
+
+def test_quit_with_unsaved_dialog_discard_all_accepts(qapp, pdf_file, monkeypatch):
+    """closeEvent with unsaved pane: Discard All accepts the event."""
+    from view_tool import ViewTool
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QMessageBox
+
+    clicked = []
+
+    def fake_exec(self):
+        clicked.append("discard_all")
+        self._fake_clicked = self._discard_all_btn
+        return 0
+
+    def fake_clicked_button(self):
+        return getattr(self, "_fake_clicked", None)
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton", fake_clicked_button)
+
+    vt = ViewTool()
+    vt.open_file(pdf_file)
+    vt._tab_widget.widget(0)._is_modified = True
+
+    event = QCloseEvent()
+    vt.closeEvent(event)
+    assert len(clicked) == 1
+    assert event.isAccepted()
+    vt.cleanup()
+
+
+def test_quit_with_unsaved_dialog_cancel_ignores_event(qapp, pdf_file, monkeypatch):
+    """closeEvent with unsaved pane: Cancel ignores the event."""
+    from view_tool import ViewTool
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QMessageBox
+
+    def fake_exec(self):
+        self._fake_clicked = None
+        return 0
+
+    def fake_clicked_button(self):
+        return None
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton", fake_clicked_button)
+
+    vt = ViewTool()
+    vt.open_file(pdf_file)
+    vt._tab_widget.widget(0)._is_modified = True
+
+    event = QCloseEvent()
+    vt.closeEvent(event)
+    assert not event.isAccepted()
+    vt.cleanup()

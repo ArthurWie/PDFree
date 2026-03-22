@@ -4255,10 +4255,34 @@ class ViewTool(QWidget):
                 break
 
     def _close_tab(self, index: int):
-        if 0 <= index < self._tab_widget.count():
-            pane = self._tab_widget.widget(index)
-            pane.cleanup()
-            self._tab_widget.removeTab(index)
+        if not (0 <= index < self._tab_widget.count()):
+            return
+        pane = self._tab_widget.widget(index)
+        if pane is None:
+            return
+        if pane.is_modified:
+            box = QMessageBox(self)
+            box.setWindowTitle("Unsaved Changes")
+            name = Path(pane.path).name if pane.path else "this document"
+            box.setText(f"Save changes to {name} before closing?")
+            save_btn = box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+            discard_btn = box.addButton(
+                "Discard", QMessageBox.ButtonRole.DestructiveRole
+            )
+            box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            box._discard_btn = discard_btn
+            box._save_btn = save_btn
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked == save_btn:
+                self._tab_widget.setCurrentIndex(index)
+                pane._save_pdf()
+            elif clicked == discard_btn:
+                pass
+            else:
+                return
+        pane.cleanup()
+        self._tab_widget.removeTab(index)
         if self._tab_widget.count() == 0:
             self._tab_widget.setVisible(False)
 
@@ -4279,5 +4303,45 @@ class ViewTool(QWidget):
         self._temp_files.clear()
 
     def closeEvent(self, event):
-        self.cleanup()
-        super().closeEvent(event)
+        modified_count = sum(
+            1
+            for i in range(self._tab_widget.count())
+            if self._tab_widget.widget(i).is_modified
+        )
+        if modified_count == 0:
+            self.cleanup()
+            event.accept()
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Unsaved Changes")
+        box.setText(
+            f"You have unsaved changes in {modified_count} open document(s).\n"
+            "Save all, discard all, or cancel?"
+        )
+        save_all_btn = box.addButton("Save All", QMessageBox.ButtonRole.AcceptRole)
+        discard_all_btn = box.addButton(
+            "Discard All", QMessageBox.ButtonRole.DestructiveRole
+        )
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box._save_all_btn = save_all_btn
+        box._discard_all_btn = discard_all_btn
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == save_all_btn:
+            for i in range(self._tab_widget.count()):
+                pane = self._tab_widget.widget(i)
+                if pane.is_modified:
+                    self._tab_widget.setCurrentIndex(i)
+                    try:
+                        pane._save_pdf()
+                    except Exception as e:
+                        QMessageBox.critical(self, "Save Failed", str(e))
+                        event.ignore()
+                        return
+            self.cleanup()
+            event.accept()
+        elif clicked == discard_all_btn:
+            self.cleanup()
+            event.accept()
+        else:
+            event.ignore()
