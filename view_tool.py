@@ -401,9 +401,10 @@ class SignatureDialog(QDialog):
 class PDFCanvas(QWidget):
     """Inner widget inside QScrollArea that renders the PDF page + overlays."""
 
-    def __init__(self, view_tool):
-        super().__init__()
-        self._vt = view_tool
+    def __init__(self, pane):
+        super().__init__(pane)
+        self._pane = pane
+        self._vt = pane._view_tool
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self._pixmap: QPixmap | None = None
@@ -1016,6 +1017,9 @@ class _RenderPane(QWidget):
     def redo(self):
         self._view_tool._redo()
 
+    def _build_ui(self):
+        self._canvas = PDFCanvas(self)
+
     def cleanup(self):
         self._render_gen = -1
         if not QThreadPool.globalInstance().waitForDone(5000):
@@ -1200,6 +1204,14 @@ class ViewTool(QWidget):
     @_render_gen.setter
     def _render_gen(self, v):
         self._pane._render_gen = v
+
+    @property
+    def canvas(self):
+        return self._pane._canvas
+
+    @property
+    def _canvas(self):
+        return self._pane._canvas
 
     def __init__(self, parent=None, initial_path: str = "", back_callback=None):
         super().__init__(parent)
@@ -1625,8 +1637,8 @@ class ViewTool(QWidget):
             f"QScrollArea {{ background: {G50}; border: none; }}"
         )
 
-        self._canvas = PDFCanvas(self)
-        self._scroll_area.setWidget(self._canvas)
+        self._pane._build_ui()
+        self._scroll_area.setWidget(self._pane._canvas)
 
         cc_lay.addWidget(self._scroll_area)
 

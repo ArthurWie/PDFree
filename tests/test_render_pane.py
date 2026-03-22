@@ -61,3 +61,23 @@ def test_viewtool_modified_delegates_to_pane(qapp):
     vt.active_pane._is_modified = True
     assert vt._modified is True
     vt.cleanup()
+
+
+def test_pdftool_canvas_construction_unchanged(qapp):
+    """PDFCanvas must still be constructable after the pane refactor."""
+    from view_tool import ViewTool
+
+    vt = ViewTool()
+    # _pane must own a canvas
+    assert hasattr(vt._pane, "_canvas")
+    assert vt._pane._canvas is not None
+    vt.cleanup()
+
+
+def test_viewtool_canvas_shim(qapp):
+    """vt.canvas shim must still point to the active pane's canvas."""
+    from view_tool import ViewTool
+
+    vt = ViewTool()
+    assert vt.canvas is vt._pane._canvas
+    vt.cleanup()
