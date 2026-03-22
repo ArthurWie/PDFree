@@ -7,6 +7,7 @@ State is stored at ~/.pdfree/library.json.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
 from colors import (
     BG,
     WHITE,
+    G50,
     G100,
     G200,
     G300,
@@ -57,7 +59,12 @@ from colors import (
     G900,
     BLUE,
     BLUE_ACCENT,
+    BLUE_DIM,
     RED,
+    RED_DIM,
+    RED_MED,
+    AMBER,
+    AMBER_BG,
 )
 
 FOLDER_COLORS = [
@@ -70,6 +77,8 @@ FOLDER_COLORS = [
     "#06B6D4",
     "#F97316",
 ]
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Persistence
@@ -123,7 +132,7 @@ class LibraryState:
 
     def __init__(self, on_dirty=None):
         self._path = _STATE_PATH
-        self._data: dict = {"files": [], "folders": []}
+        self._data: dict = {"files": [], "folders": [], "tool_clicks": {}}
         self._on_dirty = (
             on_dirty  # called when data changes; defaults to immediate _save
         )
@@ -150,6 +159,7 @@ class LibraryState:
                     self._data = {
                         "files": loaded.get("files", []),
                         "folders": loaded.get("folders", []),
+                        "tool_clicks": loaded.get("tool_clicks", {}),
                     }
         except (OSError, json.JSONDecodeError):
             pass
@@ -188,12 +198,47 @@ class LibraryState:
         )
         self._request_save()
 
+    # ---- Tool usage tracking ----------------------------------------------
+
+    def track_tool(self, tool_id: str) -> None:
+        clicks = self._data.setdefault("tool_clicks", {})
+        clicks[tool_id] = clicks.get(tool_id, 0) + 1
+        self._request_save()
+
+    def top_tools(self, n: int = 4) -> list[str]:
+        _DEFAULTS = ["view", "split", "merge", "excerpt"]
+        clicks = self._data.get("tool_clicks", {})
+        ranked = sorted(clicks, key=lambda k: clicks[k], reverse=True)
+        result = [t for t in ranked if t not in ("library",)][:n]
+        # Pad with defaults if not enough data
+        for fallback in _DEFAULTS:
+            if len(result) >= n:
+                break
+            if fallback not in result:
+                result.append(fallback)
+        return result[:n]
+
     def set_favorite(self, path: str, val: bool):
         for e in self._data["files"]:
             if e["path"] == path:
                 e["favorited"] = val
                 break
         self._request_save()
+
+    def get_last_page(self, path: str) -> int:
+        path = str(Path(path).resolve())
+        for e in self._data["files"]:
+            if e["path"] == path:
+                return e.get("last_page", 0)
+        return 0
+
+    def set_last_page(self, path: str, page: int) -> None:
+        path = str(Path(path).resolve())
+        for e in self._data["files"]:
+            if e["path"] == path and not e.get("trashed", False):
+                e["last_page"] = page
+                self._request_save()
+                return
 
     def trash(self, path: str):
         for e in self._data["files"]:
@@ -628,7 +673,9 @@ class FolderCard(QFrame):
 
         top_row = QHBoxLayout()
         folder_lbl = QLabel()
-        folder_lbl.setPixmap(svg_pixmap("folder", "#4a627b", 22))
+        from colors import BRAND
+
+        folder_lbl.setPixmap(svg_pixmap("folder", BRAND, 22))
         folder_lbl.setStyleSheet("background: transparent;")
         top_row.addWidget(folder_lbl)
         top_row.addStretch()
@@ -777,7 +824,7 @@ class _RecentFileCard(QFrame):
                 border-radius: 10px;
             }}
             QFrame#RFC:hover {{
-                background: #F9FAFB;
+                background: {G50};
             }}
         """)
 
@@ -844,16 +891,16 @@ class _FileTableRow(QFrame):
 
     def _apply_style(self, hover: bool = False):
         if self._selected:
-            bg = "#EFF6FF"
+            bg = BLUE_DIM
         elif hover:
-            bg = "#FAFAFA"
+            bg = G50
         else:
             bg = WHITE
         self.setStyleSheet(f"""
             QFrame {{
                 background: {bg};
                 border: none;
-                border-bottom: 1px solid #F3F4F6;
+                border-bottom: 1px solid {G100};
             }}
         """)
 
@@ -923,9 +970,9 @@ class _FileTableRow(QFrame):
         self._star_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: none;
-                color: {"#F59E0B" if self._fav else G300}; font: 15px;
+                color: {AMBER if self._fav else G300}; font: 15px;
             }}
-            QPushButton:hover {{ color: #F59E0B; background: #FEF3C7; border-radius: 6px; }}
+            QPushButton:hover {{ color: {AMBER}; background: {AMBER_BG}; border-radius: 6px; }}
         """)
         self._star_btn.clicked.connect(self._on_star)
         lay.addWidget(self._star_btn)
@@ -972,9 +1019,9 @@ class _FileTableRow(QFrame):
         self._star_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: none;
-                color: {"#F59E0B" if self._fav else G300}; font: 15px;
+                color: {AMBER if self._fav else G300}; font: 15px;
             }}
-            QPushButton:hover {{ color: #F59E0B; }}
+            QPushButton:hover {{ color: {AMBER}; }}
         """)
 
     def _show_menu(self):
@@ -1068,13 +1115,13 @@ class SelectionBar(QFrame):
             is_del = label == "Delete"
             btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: {"#FEE2E2" if is_del else G100};
+                    background: {RED_DIM if is_del else G100};
                     color: {RED if is_del else G700};
                     border-radius: 8px; border: none;
                     font: 12px 'Segoe UI'; padding: 0 14px;
                 }}
                 QPushButton:hover {{
-                    background: {"#FECACA" if is_del else G200};
+                    background: {RED_MED if is_del else G200};
                 }}
             """)
             btn.clicked.connect(sig)
@@ -1120,7 +1167,7 @@ class _TrashRow(QFrame):
         lay.setSpacing(10)
 
         icon = QLabel()
-        icon.setPixmap(svg_pixmap("file-text", "#6B7280", 18))
+        icon.setPixmap(svg_pixmap("file-text", G500, 18))
         icon.setStyleSheet("background: transparent;")
         lay.addWidget(icon)
 
@@ -1152,10 +1199,10 @@ class _TrashRow(QFrame):
         del_btn.setFixedHeight(28)
         del_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #FEE2E2; color: {RED}; border-radius: 6px;
+                background: {RED_DIM}; color: {RED}; border-radius: 6px;
                 border: none; font: 11px 'Segoe UI'; padding: 0 10px;
             }}
-            QPushButton:hover {{ background: #FECACA; }}
+            QPushButton:hover {{ background: {RED_MED}; }}
         """)
         del_btn.clicked.connect(lambda: self.delete_req.emit(self._path))
         lay.addWidget(del_btn)
