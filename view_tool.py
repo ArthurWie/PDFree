@@ -410,6 +410,8 @@ class PDFCanvas(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self._pixmap: QPixmap | None = None
         self._pixmap2: QPixmap | None = None
+        self._pending_link = None
+        self._link_press_pos = None
 
     def set_pixmap(self, pm: QPixmap, pm2: QPixmap | None = None):
         self._pixmap = pm
@@ -1101,9 +1103,9 @@ class _RenderPane(QWidget):
         elif kind == _fitz.LINK_GOTO:
             target = link.get("page", 0)
             if 0 <= target < self._page_count:
+                self._view_tool._show_page(target)
                 self._current_page = target
                 self.page_changed.emit(target)
-                self._view_tool._show_page(target)
         else:
             logger.debug("unhandled link: %s", link)
 

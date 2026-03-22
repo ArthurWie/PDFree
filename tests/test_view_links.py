@@ -108,4 +108,5 @@ def test_unknown_link_kind_ignored(qapp, pdf_with_uri_link, monkeypatch, caplog)
     pane = vt.active_pane
     with caplog.at_level(logging.DEBUG):
         pane._fire_link({"kind": 999, "uri": ""})
+    assert "unhandled link" in caplog.text
     vt.cleanup()
