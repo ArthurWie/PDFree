@@ -987,6 +987,8 @@ class _RenderPane(QWidget):
         # Async render
         self._render_gen = 0
 
+        self._build_ui()
+
     @property
     def active_page(self) -> int:
         return self._current_page
@@ -1637,7 +1639,6 @@ class ViewTool(QWidget):
             f"QScrollArea {{ background: {G50}; border: none; }}"
         )
 
-        self._pane._build_ui()
         self._scroll_area.setWidget(self._pane._canvas)
 
         cc_lay.addWidget(self._scroll_area)
