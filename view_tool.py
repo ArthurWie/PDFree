@@ -985,7 +985,6 @@ class _RenderPane(QWidget):
 
         # Async render
         self._render_gen = 0
-        self._render_worker = None
 
     @property
     def active_page(self) -> int:
@@ -1019,10 +1018,8 @@ class _RenderPane(QWidget):
 
     def cleanup(self):
         self._render_gen = -1
-        if self._render_worker is not None:
-            if not QThreadPool.globalInstance().waitForDone(5000):
-                logger.warning("render worker did not finish in 5 s — proceeding")
-            self._render_worker = None
+        if not QThreadPool.globalInstance().waitForDone(5000):
+            logger.warning("render worker did not finish in 5 s — proceeding")
         for w in list(self._form_widgets):
             w.setParent(None)
             w.deleteLater()
@@ -1091,6 +1088,14 @@ class ViewTool(QWidget):
     @zoom.setter
     def zoom(self, v):
         self._pane._zoom = v
+
+    @property
+    def pdf_path(self):
+        return self._pane._path
+
+    @pdf_path.setter
+    def pdf_path(self, v):
+        self._pane._path = v
 
     @property
     def _rotation(self):
