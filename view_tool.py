@@ -1083,7 +1083,10 @@ class ViewTool(QWidget):
 
     @_modified.setter
     def _modified(self, val):
-        self.active_pane._is_modified = val
+        active = self.active_pane
+        active._is_modified = val
+        if val:
+            active.modified.emit()
 
     @property
     def doc(self):
@@ -4230,6 +4233,7 @@ class ViewTool(QWidget):
         self._panes.append(pane)
         self._tab_widget.setCurrentIndex(idx)
         self._tab_widget.setTabToolTip(idx, path)
+        pane.modified.connect(lambda p=pane: self._update_pane_tab_label(p))
         self._tab_widget.setVisible(True)
 
     def _make_tab_label(self, path: str, modified: bool) -> str:
@@ -4237,6 +4241,12 @@ class ViewTool(QWidget):
         if len(name) > 20:
             name = name[:20] + "\u2026"
         return ("\u2022 " if modified else "") + name
+
+    def _update_pane_tab_label(self, pane):
+        if pane in self._panes:
+            idx = self._panes.index(pane)
+            label = self._make_tab_label(pane.path, pane.is_modified)
+            self._tab_widget.setTabText(idx, label)
 
     def _close_tab(self, index: int):
         if 0 <= index < len(self._panes):
