@@ -1069,6 +1069,8 @@ class ViewTool(QWidget):
 
     @property
     def active_pane(self):
+        if getattr(self, "_split_mode", False) and self._split_left_pane is not None:
+            return self._split_left_pane
         if hasattr(self, "_tab_widget") and self._tab_widget is not None:
             idx = self._tab_widget.currentIndex()
             if 0 <= idx < self._tab_widget.count():
@@ -1079,15 +1081,25 @@ class ViewTool(QWidget):
 
     @property
     def _modified(self):
-        if (
+        tab_modified = (
             hasattr(self, "_tab_widget")
             and self._tab_widget is not None
             and self._tab_widget.count() > 0
-        ):
-            return any(
+            and any(
                 self._tab_widget.widget(i).is_modified
                 for i in range(self._tab_widget.count())
             )
+        )
+        left_modified = (
+            getattr(self, "_split_left_pane", None) is not None
+            and self._split_left_pane.is_modified
+        )
+        right_modified = (
+            getattr(self, "_split_right_pane", None) is not None
+            and self._split_right_pane.is_modified
+        )
+        if tab_modified or left_modified or right_modified:
+            return True
         return self._pane.is_modified
 
     @_modified.setter
@@ -1316,6 +1328,14 @@ class ViewTool(QWidget):
         self._render_signals.done.connect(self._on_render_done)
         self._pool = QThreadPool.globalInstance()
         self._temp_files: list[str] = []
+
+        # -- Split view state --
+        self._split_mode = False
+        self._splitter = None
+        self._split_left_pane = None
+        self._split_right_pane = None
+        self._split_left_orig_index = -1
+        self._split_left_orig_label = ""
 
         self._build_ui()
         self._install_shortcuts()
@@ -4291,7 +4311,82 @@ class ViewTool(QWidget):
     def _on_tab_changed(self, index: int):
         pass
 
+    # ==================================================================
+    # SPLIT VIEW
+    # ==================================================================
+
+    def toggle_split(self):
+        if self._split_mode:
+            self.close_split()
+        else:
+            self._activate_split()
+
+    def _activate_split(self):
+        if self._tab_widget.count() == 0:
+            return
+        idx = self._tab_widget.currentIndex()
+        pane = self._tab_widget.widget(idx)
+        if pane is None:
+            return
+
+        self._split_left_orig_index = idx
+        self._split_left_orig_label = self._tab_widget.tabText(idx)
+
+        self._tab_widget.removeTab(idx)
+        self._tab_widget.setVisible(False)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._splitter.setHandleWidth(4)
+
+        right = _RenderPane(self)
+        right.modified.connect(lambda p=right: self._update_pane_tab_label(p))
+        if pane.path:
+            right.load(pane.path)
+
+        self._split_left_pane = pane
+        self._split_right_pane = right
+
+        pane.setParent(self._splitter)
+        self._splitter.addWidget(pane)
+        self._splitter.addWidget(right)
+        self._splitter.setSizes([500, 500])
+        self._splitter.show()
+
+        self._split_mode = True
+
+    def close_split(self):
+        if not self._split_mode:
+            return
+
+        if self._split_right_pane is not None:
+            self._split_right_pane.cleanup()
+            self._split_right_pane.setParent(None)
+            self._split_right_pane.deleteLater()
+            self._split_right_pane = None
+
+        if self._split_left_pane is not None:
+            pane = self._split_left_pane
+            self._split_left_pane = None
+            idx = min(self._split_left_orig_index, self._tab_widget.count())
+            pane.setParent(self._tab_widget)
+            self._tab_widget.insertTab(idx, pane, self._split_left_orig_label)
+            self._tab_widget.setCurrentIndex(idx)
+
+        if self._splitter is not None:
+            self._splitter.setParent(None)
+            self._splitter.deleteLater()
+            self._splitter = None
+
+        self._tab_widget.setVisible(True)
+        self._split_mode = False
+
     def cleanup(self):
+        if self._split_right_pane is not None:
+            self._split_right_pane.cleanup()
+            self._split_right_pane = None
+        if self._split_left_pane is not None:
+            self._split_left_pane.cleanup()
+            self._split_left_pane = None
         for i in range(self._tab_widget.count()):
             pane = self._tab_widget.widget(i)
             pane.cleanup()
