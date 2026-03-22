@@ -1071,22 +1071,30 @@ class ViewTool(QWidget):
     def active_pane(self):
         if hasattr(self, "_tab_widget") and self._tab_widget is not None:
             idx = self._tab_widget.currentIndex()
-            if 0 <= idx < len(self._panes):
-                return self._panes[idx]
+            if 0 <= idx < self._tab_widget.count():
+                pane = self._tab_widget.widget(idx)
+                if pane is not None:
+                    return pane
         return self._pane
 
     @property
     def _modified(self):
-        if hasattr(self, "_panes") and self._panes:
-            return any(p.is_modified for p in self._panes)
+        if (
+            hasattr(self, "_tab_widget")
+            and self._tab_widget is not None
+            and self._tab_widget.count() > 0
+        ):
+            return any(
+                self._tab_widget.widget(i).is_modified
+                for i in range(self._tab_widget.count())
+            )
         return self._pane.is_modified
 
     @_modified.setter
     def _modified(self, val):
         active = self.active_pane
         active._is_modified = val
-        if val:
-            active.modified.emit()
+        active.modified.emit()
 
     @property
     def doc(self):
@@ -1246,9 +1254,6 @@ class ViewTool(QWidget):
 
         # _pane must be created before any property access
         self._pane = _RenderPane(self)
-
-        # Multi-tab state
-        self._panes: list = []
 
         if fitz is None:
             lay = QVBoxLayout(self)
@@ -4222,7 +4227,8 @@ class ViewTool(QWidget):
 
     def open_file(self, path: str):
         canonical = str(Path(path).resolve())
-        for i, pane in enumerate(self._panes):
+        for i in range(self._tab_widget.count()):
+            pane = self._tab_widget.widget(i)
             if str(Path(pane.path).resolve()) == canonical:
                 self._tab_widget.setCurrentIndex(i)
                 return
@@ -4230,7 +4236,6 @@ class ViewTool(QWidget):
         pane.load(path)
         label = self._make_tab_label(path, False)
         idx = self._tab_widget.addTab(pane, label)
-        self._panes.append(pane)
         self._tab_widget.setCurrentIndex(idx)
         self._tab_widget.setTabToolTip(idx, path)
         pane.modified.connect(lambda p=pane: self._update_pane_tab_label(p))
@@ -4243,27 +4248,29 @@ class ViewTool(QWidget):
         return ("\u2022 " if modified else "") + name
 
     def _update_pane_tab_label(self, pane):
-        if pane in self._panes:
-            idx = self._panes.index(pane)
-            label = self._make_tab_label(pane.path, pane.is_modified)
-            self._tab_widget.setTabText(idx, label)
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.widget(i) is pane:
+                label = self._make_tab_label(pane.path, pane.is_modified)
+                self._tab_widget.setTabText(i, label)
+                break
 
     def _close_tab(self, index: int):
-        if 0 <= index < len(self._panes):
-            pane = self._panes.pop(index)
+        if 0 <= index < self._tab_widget.count():
+            pane = self._tab_widget.widget(index)
             pane.cleanup()
             self._tab_widget.removeTab(index)
-        if not self._panes:
+        if self._tab_widget.count() == 0:
             self._tab_widget.setVisible(False)
 
     def _on_tab_changed(self, index: int):
         pass
 
     def cleanup(self):
-        for pane in list(self._panes):
+        for i in range(self._tab_widget.count()):
+            pane = self._tab_widget.widget(i)
             pane.cleanup()
-        self._panes.clear()
-        self._pane.cleanup()
+        if self._tab_widget.count() == 0:
+            self._pane.cleanup()
         for p in self._temp_files:
             try:
                 os.unlink(p)
