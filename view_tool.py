@@ -21,9 +21,13 @@ All original features preserved:
   - Cleanup method
 """
 
+import collections
+import csv
+import json
+import logging
 import math
 import os
-import subprocess
+import re
 import tempfile
 from enum import Enum
 from pathlib import Path
@@ -61,6 +65,9 @@ from PySide6.QtCore import (
     QObject,
     QByteArray,
     QBuffer,
+    Signal,
+    QRunnable,
+    QThreadPool,
 )
 from PySide6.QtGui import (
     QPainter,
@@ -76,6 +83,7 @@ from PySide6.QtGui import (
     QCursor,
     QIcon,
 )
+from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from icons import svg_pixmap, svg_icon
 from colors import (
     BLUE,
@@ -98,6 +106,8 @@ try:
 except ImportError:
     fitz = None
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Colors (view_tool-specific overrides / additions)
 # ---------------------------------------------------------------------------
@@ -106,6 +116,10 @@ TOOL_BORDER = "#93C5FD"
 SIDEBAR_BG = "#E2E6EC"
 SIDEBAR_BORDER = "#C8CDD5"
 TAB_BG = "#EDF0F4"
+
+# Maximum number of thumbnail pixmaps held in memory at once.
+# Older entries are evicted and their labels cleared when the limit is hit.
+_THUMB_CACHE_SIZE = 200
 
 # Selection highlight (Windows-style soft blue: #0078D4 @ ~40% opacity)
 SEL_BLUE_R, SEL_BLUE_G, SEL_BLUE_B = 0, 120, 212
@@ -140,6 +154,7 @@ class Tool(Enum):
     ARROW = "arrow"
     SIGN = "sign"
     EXCERTER = "excerter"
+    MEASURE = "measure"
 
 
 # (tool, icon, label, shortcut_key)
@@ -157,11 +172,17 @@ TOOL_DEFS = [
     (Tool.ARROW, "\u2192", "Arrow", "A"),
     (Tool.SIGN, "\u2712", "Sign", ""),
     (Tool.EXCERTER, "\u2702", "Excerter", "E"),
+    (Tool.MEASURE, "\u25cf", "Measure", "M"),
 ]
 
 FIT_PAGE = -1.0
 FIT_WIDTH = -2.0
 MAX_UNDO = 30
+
+
+class ViewMode:
+    SINGLE = "single"
+    TWO_UP = "two_up"
 
 
 # ---------------------------------------------------------------------------
@@ -386,9 +407,11 @@ class PDFCanvas(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self._pixmap: QPixmap | None = None
+        self._pixmap2: QPixmap | None = None
 
-    def set_pixmap(self, pm: QPixmap):
+    def set_pixmap(self, pm: QPixmap, pm2: QPixmap | None = None):
         self._pixmap = pm
+        self._pixmap2 = pm2
         self.update()
 
     # ------------------------------------------------------------------
@@ -421,6 +444,15 @@ class PDFCanvas(QWidget):
         pen = QPen(QColor(G300), 1)
         p.setPen(pen)
         p.drawRect(ox - 1, oy - 1, self._pixmap.width() + 1, self._pixmap.height() + 1)
+
+        # Right page (two-up mode)
+        if self._pixmap2 is not None:
+            ox2 = int(vt._page2_ox)
+            oy2 = int(vt._page2_oy)
+            p.drawPixmap(ox2, oy2, self._pixmap2)
+            p.drawRect(
+                ox2 - 1, oy2 - 1, self._pixmap2.width() + 1, self._pixmap2.height() + 1
+            )
 
         # --- Search highlights ---
         if vt._search_flat and vt.doc:
@@ -494,6 +526,35 @@ class PDFCanvas(QWidget):
         # --- Live annotation preview ---
         if vt._drag_start is not None and vt.doc:
             self._paint_live_preview(p, vt)
+
+        # --- Measurement overlay ---
+        if vt._tool == Tool.MEASURE and vt._measure_start is not None:
+            sx, sy = vt._measure_start
+            if vt._measure_end is not None:
+                ex, ey = vt._measure_end
+            else:
+                ex, ey = sx, sy
+            p.setPen(QPen(QColor("#EF4444"), 2, Qt.PenStyle.SolidLine))
+            p.drawLine(int(sx), int(sy), int(ex), int(ey))
+            p.setBrush(QBrush(QColor("#EF4444")))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(int(sx) - 4, int(sy) - 4, 8, 8)
+            p.drawEllipse(int(ex) - 4, int(ey) - 4, 8, 8)
+            if vt._measure_label:
+                lx = int((sx + ex) / 2) + 8
+                ly = int((sy + ey) / 2) - 8
+                p.setPen(QColor("#1F2937"))
+                p.setFont(QFont("Segoe UI", 10))
+                fm = p.fontMetrics()
+                text_rect = fm.boundingRect(vt._measure_label)
+                bg_rect = QRectF(
+                    lx - 4,
+                    ly - text_rect.height(),
+                    text_rect.width() + 8,
+                    text_rect.height() + 4,
+                )
+                p.fillRect(bg_rect, QColor(255, 255, 255, 220))
+                p.drawText(lx, ly, vt._measure_label)
 
     def _paint_live_preview(self, p, vt):
         """Draw in-progress annotation shape during drag."""
@@ -647,8 +708,15 @@ class PDFCanvas(QWidget):
             Qt.Key.Key_L: Tool.LINE,
             Qt.Key.Key_A: Tool.ARROW,
             Qt.Key.Key_E: Tool.EXCERTER,
+            Qt.Key.Key_M: Tool.MEASURE,
         }
         key = event.key()
+        if key == Qt.Key.Key_Escape and self._vt._tool == Tool.MEASURE:
+            self._vt._measure_start = None
+            self._vt._measure_end = None
+            self._vt._measure_label = ""
+            self.update()
+            return
         if key in shortcut_map:
             self._vt._set_tool(shortcut_map[key])
         else:
@@ -717,6 +785,253 @@ class _ViewportFilter(QObject):
         return False
 
 
+class _RenderSignals(QObject):
+    done = Signal(object)
+
+
+class _RenderWorker(QRunnable):
+    def __init__(
+        self,
+        signals,
+        gen,
+        pdf_bytes,
+        page_idx,
+        total_pages,
+        zoom,
+        rotation,
+        dpr,
+        cw,
+        ch,
+        view_mode,
+    ):
+        super().__init__()
+        self._signals = signals
+        self._gen = gen
+        self._pdf_bytes = pdf_bytes
+        self._page_idx = page_idx
+        self._total_pages = total_pages
+        self._zoom = zoom
+        self._rotation = rotation
+        self._dpr = dpr
+        self._cw = cw
+        self._ch = ch
+        self._view_mode = view_mode
+
+    def run(self):
+        if fitz is None:
+            return
+        try:
+            doc = fitz.Document(stream=self._pdf_bytes, filetype="pdf")
+            try:
+                if self._view_mode == ViewMode.TWO_UP:
+                    result = self._render_twoup(doc)
+                else:
+                    result = self._render_single(doc)
+                result["gen"] = self._gen
+                self._signals.done.emit(result)
+            finally:
+                doc.close()
+        except Exception:
+            pass
+
+    def _make_img(self, page, mat_phys):
+        pix = page.get_pixmap(matrix=mat_phys, alpha=False)
+        try:
+            data = bytes(pix.samples_mv)
+        except AttributeError:
+            data = bytes(pix.samples)
+        img = QImage(
+            data, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888
+        ).copy()
+        img.setDevicePixelRatio(self._dpr)
+        return img, pix.width, pix.height
+
+    def _render_single(self, doc):
+        cw, ch, dpr = self._cw, self._ch, self._dpr
+        zoom, rotation = self._zoom, self._rotation
+        page = doc[self._page_idx]
+        pw, ph = page.rect.width, page.rect.height
+        if rotation in (90, 270):
+            pw, ph = ph, pw
+        if zoom == FIT_PAGE:
+            scale = max(min((cw - 40) / pw, (ch - 40) / ph), 0.05)
+        elif zoom == FIT_WIDTH:
+            scale = max((cw - 40) / pw, 0.05)
+        else:
+            scale = zoom
+        mat_phys = fitz.Matrix(scale * dpr, scale * dpr).prerotate(rotation)
+        img1, phys_w, phys_h = self._make_img(page, mat_phys)
+        iw = int(phys_w / dpr)
+        ih = int(phys_h / dpr)
+        if zoom == FIT_PAGE:
+            canvas_w = max(cw, iw)
+            canvas_h = max(ch, ih)
+            ox = (canvas_w - iw) / 2
+            oy = (canvas_h - ih) / 2
+        else:
+            pad = 20
+            canvas_w = max(iw + pad * 2, cw)
+            canvas_h = max(ih + pad * 2, ch)
+            ox = (canvas_w - iw) / 2
+            oy = pad
+        return {
+            "img1": img1,
+            "img2": None,
+            "canvas_w": int(canvas_w),
+            "canvas_h": int(canvas_h),
+            "page_ox": ox,
+            "page_oy": oy,
+            "page2_ox": 0.0,
+            "page2_oy": 0.0,
+            "page_iw": float(iw),
+            "page_ih": float(ih),
+            "scale": scale,
+            "rotation": rotation,
+        }
+
+    def _render_twoup(self, doc):
+        cw, ch, dpr = self._cw, self._ch, self._dpr
+        zoom, rotation = self._zoom, self._rotation
+        left = doc[self._page_idx]
+        lw, lh = left.rect.width, left.rect.height
+        if rotation in (90, 270):
+            lw, lh = lh, lw
+        half_cw = (cw - 60) / 2
+        if zoom == FIT_PAGE:
+            scale = min(half_cw / lw, (ch - 40) / lh)
+        elif zoom == FIT_WIDTH:
+            scale = half_cw / lw
+        else:
+            scale = zoom
+        scale = max(scale, 0.05)
+        mat_phys = fitz.Matrix(scale * dpr, scale * dpr).prerotate(rotation)
+        img1, pw1, ph1 = self._make_img(left, mat_phys)
+        iw1 = int(pw1 / dpr)
+        ih1 = int(ph1 / dpr)
+        img2 = None
+        iw2, ih2 = 0, 0
+        if self._page_idx + 1 < self._total_pages:
+            right = doc[self._page_idx + 1]
+            img2, pw2, ph2 = self._make_img(right, mat_phys)
+            iw2 = int(pw2 / dpr)
+            ih2 = int(ph2 / dpr)
+        gap = 20
+        pad = 20
+        spread_w = iw1 + (gap + iw2 if img2 else 0)
+        spread_h = max(ih1, ih2 if img2 else 0)
+        canvas_w = max(spread_w + pad * 2, cw)
+        canvas_h = max(spread_h + pad * 2, ch)
+        cx = (canvas_w - spread_w) / 2
+        return {
+            "img1": img1,
+            "img2": img2,
+            "canvas_w": int(canvas_w),
+            "canvas_h": int(canvas_h),
+            "page_ox": cx,
+            "page_oy": (canvas_h - ih1) / 2,
+            "page2_ox": cx + iw1 + gap if img2 else 0.0,
+            "page2_oy": (canvas_h - ih2) / 2 if img2 else 0.0,
+            "page_iw": float(iw1),
+            "page_ih": float(ih1),
+            "scale": scale,
+            "rotation": rotation,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Per-document state container
+# ---------------------------------------------------------------------------
+
+
+class _RenderPane(QWidget):
+    page_changed = Signal(int)
+    modified = Signal()
+    load_failed = Signal(str)
+
+    def __init__(self, view_tool):
+        super().__init__(view_tool)
+        self._view_tool = view_tool
+
+        # Document
+        self._doc = None
+        self._path = ""
+        self._page_count = 0
+        self._current_page = 0
+        self._zoom = FIT_PAGE
+        self._rotation = 0
+        self._is_modified = False
+
+        # Undo / Redo
+        self._undo_stack: list[tuple] = []
+        self._redo_stack: list[tuple] = []
+
+        # Search state
+        self._search_results: list[tuple] = []
+        self._search_flat: list[tuple] = []
+        self._search_idx = -1
+
+        # Form overlay widgets
+        self._form_widgets: list = []
+
+        # Thumbnail state
+        self._thumb_frames: list = []
+        self._thumb_cache: collections.OrderedDict = collections.OrderedDict()
+        self._highlighted_thumb_idx: int = -1
+        self._thumb_render_next = 0
+        self._thumb_timer = None
+
+        # Link cache (populated after each page render)
+        self._link_cache: list[tuple] = []
+
+        # Async render
+        self._render_gen = 0
+        self._render_worker = None
+
+    @property
+    def active_page(self) -> int:
+        return self._current_page
+
+    @property
+    def page_count(self) -> int:
+        return self._page_count
+
+    @property
+    def is_modified(self) -> bool:
+        return self._is_modified
+
+    @property
+    def can_undo(self) -> bool:
+        return bool(self._undo_stack)
+
+    @property
+    def can_redo(self) -> bool:
+        return bool(self._redo_stack)
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    def undo(self):
+        self._view_tool._undo()
+
+    def redo(self):
+        self._view_tool._redo()
+
+    def cleanup(self):
+        self._render_gen = -1
+        if self._render_worker is not None:
+            if not QThreadPool.globalInstance().waitForDone(5000):
+                logger.warning("render worker did not finish in 5 s — proceeding")
+            self._render_worker = None
+        for w in list(self._form_widgets):
+            w.setParent(None)
+            w.deleteLater()
+        self._form_widgets.clear()
+        if self._doc is not None:
+            self._doc.close()
+            self._doc = None
+
+
 # ---------------------------------------------------------------------------
 # Main ViewTool widget
 # ---------------------------------------------------------------------------
@@ -729,9 +1044,164 @@ class ViewTool(QWidget):
     ZOOM_MAX = 5.0
     SIDEBAR_W = 256
 
+    # ------------------------------------------------------------------
+    # active_pane + compatibility shims
+    # ------------------------------------------------------------------
+
+    @property
+    def active_pane(self):
+        return self._pane
+
+    @property
+    def _modified(self):
+        return self._pane.is_modified
+
+    @_modified.setter
+    def _modified(self, val):
+        self._pane._is_modified = val
+
+    @property
+    def doc(self):
+        return self._pane._doc
+
+    @doc.setter
+    def doc(self, v):
+        self._pane._doc = v
+
+    @property
+    def total_pages(self):
+        return self._pane._page_count
+
+    @total_pages.setter
+    def total_pages(self, v):
+        self._pane._page_count = v
+
+    @property
+    def current_page(self):
+        return self._pane._current_page
+
+    @current_page.setter
+    def current_page(self, v):
+        self._pane._current_page = v
+
+    @property
+    def zoom(self):
+        return self._pane._zoom
+
+    @zoom.setter
+    def zoom(self, v):
+        self._pane._zoom = v
+
+    @property
+    def _rotation(self):
+        return self._pane._rotation
+
+    @_rotation.setter
+    def _rotation(self, v):
+        self._pane._rotation = v
+
+    @property
+    def _undo_stack(self):
+        return self._pane._undo_stack
+
+    @_undo_stack.setter
+    def _undo_stack(self, v):
+        self._pane._undo_stack = v
+
+    @property
+    def _redo_stack(self):
+        return self._pane._redo_stack
+
+    @_redo_stack.setter
+    def _redo_stack(self, v):
+        self._pane._redo_stack = v
+
+    @property
+    def _search_results(self):
+        return self._pane._search_results
+
+    @_search_results.setter
+    def _search_results(self, v):
+        self._pane._search_results = v
+
+    @property
+    def _search_flat(self):
+        return self._pane._search_flat
+
+    @_search_flat.setter
+    def _search_flat(self, v):
+        self._pane._search_flat = v
+
+    @property
+    def _search_idx(self):
+        return self._pane._search_idx
+
+    @_search_idx.setter
+    def _search_idx(self, v):
+        self._pane._search_idx = v
+
+    @property
+    def _form_widgets(self):
+        return self._pane._form_widgets
+
+    @_form_widgets.setter
+    def _form_widgets(self, v):
+        self._pane._form_widgets = v
+
+    @property
+    def _thumb_frames(self):
+        return self._pane._thumb_frames
+
+    @_thumb_frames.setter
+    def _thumb_frames(self, v):
+        self._pane._thumb_frames = v
+
+    @property
+    def _thumb_cache(self):
+        return self._pane._thumb_cache
+
+    @_thumb_cache.setter
+    def _thumb_cache(self, v):
+        self._pane._thumb_cache = v
+
+    @property
+    def _highlighted_thumb_idx(self):
+        return self._pane._highlighted_thumb_idx
+
+    @_highlighted_thumb_idx.setter
+    def _highlighted_thumb_idx(self, v):
+        self._pane._highlighted_thumb_idx = v
+
+    @property
+    def _thumb_render_next(self):
+        return self._pane._thumb_render_next
+
+    @_thumb_render_next.setter
+    def _thumb_render_next(self, v):
+        self._pane._thumb_render_next = v
+
+    @property
+    def _thumb_timer(self):
+        return self._pane._thumb_timer
+
+    @_thumb_timer.setter
+    def _thumb_timer(self, v):
+        self._pane._thumb_timer = v
+
+    @property
+    def _render_gen(self):
+        return self._pane._render_gen
+
+    @_render_gen.setter
+    def _render_gen(self, v):
+        self._pane._render_gen = v
+
     def __init__(self, parent=None, initial_path: str = "", back_callback=None):
         super().__init__(parent)
         self._back_callback = back_callback
+
+        # _pane must be created before any property access
+        self._pane = _RenderPane(self)
 
         if fitz is None:
             lay = QVBoxLayout(self)
@@ -743,22 +1213,16 @@ class ViewTool(QWidget):
 
         # -- Document state --
         self.pdf_path = ""
-        self.doc = None
-        self.total_pages = 0
-        self.current_page = 0
-        self._modified = False
 
         # -- View state --
-        self.zoom = FIT_PAGE
-        self._rotation = 0
-        self._thumb_imgs: list = []
+        self._view_mode = ViewMode.SINGLE
         self._highlighted_thumb_frame = None
-        self._thumb_render_next = 0
-        self._thumb_timer = None
 
         # -- Coordinate mapping (set during render) --
         self._page_ox = 0.0
         self._page_oy = 0.0
+        self._page2_ox = 0.0
+        self._page2_oy = 0.0
         self._render_mat = fitz.Matrix(1, 1) if fitz else None
         self._inv_mat = fitz.Matrix(1, 1) if fitz else None
 
@@ -786,18 +1250,20 @@ class ViewTool(QWidget):
         self._page_iw: float = 0.0  # rendered page width  (canvas px)
         self._page_ih: float = 0.0  # rendered page height (canvas px)
 
+        # -- Measure state --
+        self._measure_start: tuple | None = None
+        self._measure_end: tuple | None = None
+        self._measure_label: str = ""
+
         # -- Search state --
-        self._search_results: list[tuple] = []
-        self._search_flat: list[tuple] = []
-        self._search_idx = -1
         self._search_visible = False
+        self._result_rows: list[QPushButton] = []
 
-        # -- Form widget overlays --
-        self._form_widgets: list = []
-
-        # -- Undo / Redo --
-        self._undo_stack: list[tuple] = []
-        self._redo_stack: list[tuple] = []
+        # -- Async rendering --
+        self._render_signals = _RenderSignals()
+        self._render_signals.done.connect(self._on_render_done)
+        self._pool = QThreadPool.globalInstance()
+        self._temp_files: list[str] = []
 
         self._build_ui()
         self._install_shortcuts()
@@ -865,6 +1331,10 @@ class ViewTool(QWidget):
         print_btn.clicked.connect(self._print_pdf)
         left_lay.addWidget(print_btn)
 
+        export_form_btn = _hbtn("Export Form")
+        export_form_btn.clicked.connect(self._export_form_data)
+        left_lay.addWidget(export_form_btn)
+
         left_lay.addSpacing(8)
 
         add_btn = _hbtn(
@@ -914,6 +1384,44 @@ class ViewTool(QWidget):
         r_div.setFixedSize(1, 24)
         r_div.setStyleSheet(f"background: {G200}; border: none;")
         right_lay.addWidget(r_div)
+
+        # View mode buttons
+        mode_grp = QWidget()
+        mode_grp.setStyleSheet("background: transparent;")
+        mode_lay = QHBoxLayout(mode_grp)
+        mode_lay.setContentsMargins(0, 0, 0, 0)
+        mode_lay.setSpacing(2)
+
+        _mode_style = (
+            f"QPushButton {{ background: {WHITE}; color: {G700}; border: 1px solid {G300}; "
+            f"border-radius: 6px; font: 11px 'Segoe UI'; padding: 0 8px; }}"
+            f"QPushButton:hover {{ background: {G100}; }}"
+            f"QPushButton:checked {{ background: {BLUE}; color: {WHITE}; border: 1px solid {BLUE}; }}"
+        )
+        self._btn_mode_single = QPushButton("\u25ad")
+        self._btn_mode_single.setCheckable(True)
+        self._btn_mode_single.setChecked(True)
+        self._btn_mode_single.setFixedHeight(32)
+        self._btn_mode_single.setToolTip("Single page")
+        self._btn_mode_single.setStyleSheet(_mode_style)
+        self._btn_mode_single.clicked.connect(self._set_mode_single)
+        mode_lay.addWidget(self._btn_mode_single)
+
+        self._btn_mode_twoup = QPushButton("\u25ad\u25ad")
+        self._btn_mode_twoup.setCheckable(True)
+        self._btn_mode_twoup.setChecked(False)
+        self._btn_mode_twoup.setFixedHeight(32)
+        self._btn_mode_twoup.setToolTip("Two-up (facing pages)")
+        self._btn_mode_twoup.setStyleSheet(_mode_style)
+        self._btn_mode_twoup.clicked.connect(self._set_mode_twoup)
+        mode_lay.addWidget(self._btn_mode_twoup)
+
+        right_lay.addWidget(mode_grp)
+
+        r_div_mode = QFrame()
+        r_div_mode.setFixedSize(1, 24)
+        r_div_mode.setStyleSheet(f"background: {G200}; border: none;")
+        right_lay.addWidget(r_div_mode)
 
         # Zoom controls
         zoom_grp = QWidget()
@@ -1145,6 +1653,15 @@ class ViewTool(QWidget):
         self._search_entry.returnPressed.connect(self._do_search)
         sb2.addWidget(self._search_entry)
 
+        self._search_case_btn = self._search_toggle_btn("Aa", "Match case")
+        sb2.addWidget(self._search_case_btn)
+
+        self._search_word_btn = self._search_toggle_btn("\u0057\u0307", "Whole word")
+        sb2.addWidget(self._search_word_btn)
+
+        self._search_regex_btn = self._search_toggle_btn(".*", "Regex")
+        sb2.addWidget(self._search_regex_btn)
+
         sprev_btn = self._small_btn("\u25c0")
         sprev_btn.clicked.connect(self._search_prev)
         sb2.addWidget(sprev_btn)
@@ -1168,6 +1685,23 @@ class ViewTool(QWidget):
         sb2.addStretch()
         self._search_bar.setVisible(False)
         cc_lay.addWidget(self._search_bar)
+
+        # Search results panel (hidden until a search returns matches)
+        self._results_panel = QScrollArea()
+        self._results_panel.setMaximumHeight(220)
+        self._results_panel.setWidgetResizable(True)
+        self._results_panel.setVisible(False)
+        self._results_panel.setStyleSheet(
+            f"QScrollArea {{ background: {WHITE}; border: none; border-top: 1px solid {G200}; }}"
+        )
+        self._results_container = QWidget()
+        self._results_container.setStyleSheet(f"background: {WHITE};")
+        self._results_layout = QVBoxLayout(self._results_container)
+        self._results_layout.setContentsMargins(0, 0, 0, 0)
+        self._results_layout.setSpacing(0)
+        self._results_layout.addStretch()
+        self._results_panel.setWidget(self._results_container)
+        cc_lay.addWidget(self._results_panel)
 
         # Nav bar (Figma: 48px, white, Prev | Page pill | Next | divider | Quick Jump)
         nav_bar = QFrame()
@@ -1305,6 +1839,21 @@ class ViewTool(QWidget):
             f"border: 1px solid {G300}; border-radius: 5px; "
             f"font: 12px 'Segoe UI'; }}"
             f"QPushButton:hover {{ background: {G100}; }}"
+        )
+        return b
+
+    def _search_toggle_btn(self, text, tooltip):
+        b = QPushButton(text)
+        b.setCheckable(True)
+        b.setFixedSize(30, 28)
+        b.setToolTip(tooltip)
+        b.setStyleSheet(
+            f"QPushButton {{ background: {WHITE}; color: {G500}; "
+            f"border: 1px solid {G300}; border-radius: 5px; "
+            f"font: 11px 'Segoe UI'; }}"
+            f"QPushButton:hover {{ background: {G100}; }}"
+            f"QPushButton:checked {{ background: {BLUE}; color: {WHITE}; "
+            f"border: 1px solid {BLUE}; }}"
         )
         return b
 
@@ -1850,6 +2399,7 @@ class ViewTool(QWidget):
             self._excerpt_out.save(path)
             QMessageBox.information(self, "Saved", f"Excerpt PDF saved to:\n{path}")
         except Exception as e:
+            logger.exception("save failed")
             QMessageBox.critical(self, "Error", f"Could not save:\n{e}")
 
     def _toggle_sidebar(self):
@@ -1893,11 +2443,14 @@ class ViewTool(QWidget):
             )
 
     def _set_tool(self, tool: Tool):
+        self._measure_start = None
+        self._measure_end = None
+        self._measure_label = ""
         self._tool = tool
         for t, btn in self._tool_buttons.items():
             self._style_tool_btn(btn, t == tool)
         cursors = {
-            Tool.VIEW: Qt.CursorShape.ArrowCursor,
+            Tool.VIEW: Qt.CursorShape.IBeamCursor,
             Tool.SELECT: Qt.CursorShape.IBeamCursor,
             Tool.HIGHLIGHT: Qt.CursorShape.IBeamCursor,
             Tool.UNDERLINE: Qt.CursorShape.IBeamCursor,
@@ -1911,6 +2464,7 @@ class ViewTool(QWidget):
             Tool.ARROW: Qt.CursorShape.CrossCursor,
             Tool.SIGN: Qt.CursorShape.CrossCursor,
             Tool.EXCERTER: Qt.CursorShape.CrossCursor,
+            Tool.MEASURE: Qt.CursorShape.CrossCursor,
         }
         self._canvas.setCursor(QCursor(cursors.get(tool, Qt.CursorShape.ArrowCursor)))
 
@@ -2044,10 +2598,75 @@ class ViewTool(QWidget):
             ("End", self._last_page),
             ("+", self._zoom_in),
             ("-", self._zoom_out),
+            ("Ctrl+G", self._goto_page_dialog),
+            ("Ctrl++", self._zoom_in),
+            ("Ctrl+=", self._zoom_in),
+            ("Ctrl+-", self._zoom_out),
+            ("Ctrl+0", self._zoom_fit),
+            ("Ctrl+P", self._print_pdf),
+            ("Ctrl+W", self._close_tool),
         ]
         for key, slot in shortcuts:
             sc = QShortcut(QKeySequence(key), self)
             sc.activated.connect(slot)
+
+    def _goto_page_dialog(self):
+        if not self.doc:
+            return
+        num, ok = QInputDialog.getInt(
+            self,
+            "Go to Page",
+            "Page number:",
+            value=self.current_page + 1,
+            min=1,
+            max=self.total_pages,
+        )
+        if ok:
+            self._show_page(num - 1)
+
+    def _print_pdf(self):
+        if not self.pdf_path or not self.doc:
+            return
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dlg = QPrintDialog(printer, self)
+        if dlg.exec() != QPrintDialog.DialogCode.Accepted:
+            return
+        from_page = printer.fromPage()
+        to_page = printer.toPage()
+        if from_page == 0 and to_page == 0:
+            pages = range(self.total_pages)
+        else:
+            pages = range(from_page - 1, min(to_page, self.total_pages))
+        copies = printer.copyCount()
+        painter = QPainter()
+        try:
+            painter.begin(printer)
+            mat = fitz.Matrix(2.0, 2.0)
+            first = True
+            for _ in range(copies):
+                for page_idx in pages:
+                    if not first:
+                        printer.newPage()
+                    first = False
+                    page = self.doc[page_idx]
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    img = QImage(
+                        pix.samples,
+                        pix.width,
+                        pix.height,
+                        pix.stride,
+                        QImage.Format.Format_RGB888,
+                    )
+                    painter.drawImage(printer.pageRect(QPrinter.Unit.DevicePixel), img)
+        except Exception as e:
+            logger.exception("print failed")
+            QMessageBox.critical(self, "Error", f"Print failed:\n{e}")
+        finally:
+            painter.end()
+
+    def _close_tool(self):
+        if self._back_callback:
+            self._back_callback()
 
     # ==================================================================
     # UNDO / REDO
@@ -2080,6 +2699,7 @@ class ViewTool(QWidget):
             self._modified = bool(self._undo_stack)
             self._show_page(min(page_idx, self.total_pages - 1))
         except Exception as e:
+            logger.exception("undo failed")
             QMessageBox.critical(self, "Undo Error", str(e))
 
     def _redo(self):
@@ -2095,6 +2715,7 @@ class ViewTool(QWidget):
             self._modified = True
             self._show_page(min(page_idx, self.total_pages - 1))
         except Exception as e:
+            logger.exception("redo failed")
             QMessageBox.critical(self, "Redo Error", str(e))
 
     # ==================================================================
@@ -2112,6 +2733,18 @@ class ViewTool(QWidget):
         try:
             if self.doc:
                 self.doc.close()
+            file_size = Path(self.pdf_path).stat().st_size
+            if file_size > 150 * 1024 * 1024:
+                mb = file_size / (1024 * 1024)
+                reply = QMessageBox.question(
+                    self,
+                    "Large file",
+                    f"This file is {mb:.0f} MB. Opening very large PDFs may be slow "
+                    f"and use significant memory.\n\nContinue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
             self.doc = fitz.open(self.pdf_path)
             self.total_pages = len(self.doc)
             self.current_page = 0
@@ -2134,6 +2767,7 @@ class ViewTool(QWidget):
             self._show_page(0)
         except Exception as e:
             self.total_pages = 0
+            logger.exception("could not open pdf")
             QMessageBox.critical(self, "Error", f"Could not load PDF:\n{e}")
 
     def _add_pdf(self):
@@ -2161,6 +2795,7 @@ class ViewTool(QWidget):
             self._build_toc()
             self._show_page(self.current_page)
         except (FileNotFoundError, RuntimeError) as e:
+            logger.exception("could not open pdf")
             QMessageBox.critical(self, "Error", f"Could not add PDF:\n{e}")
 
     # ==================================================================
@@ -2173,8 +2808,10 @@ class ViewTool(QWidget):
             item = self._thumb_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        self._thumb_imgs.clear()
+        self._thumb_frames.clear()
+        self._thumb_cache.clear()
         self._highlighted_thumb_frame = None
+        self._highlighted_thumb_idx = -1
         if not self.doc:
             return
 
@@ -2205,7 +2842,7 @@ class ViewTool(QWidget):
 
             frame.mousePressEvent = lambda e, idx=i: self._show_page(idx)
             self._thumb_layout.insertWidget(self._thumb_layout.count() - 1, frame)
-            self._thumb_imgs.append((None, frame, img_lbl))
+            self._thumb_frames.append((frame, img_lbl))
 
         self._thumb_render_next = 0
         QTimer.singleShot(0, self._render_thumb_batch)
@@ -2217,15 +2854,24 @@ class ViewTool(QWidget):
         end = min(start + batch, self.total_pages)
 
         for i in range(start, end):
-            pm, frame, img_lbl = self._thumb_imgs[i]
-            if pm is not None:
+            if i in self._thumb_cache:
                 continue
+            frame, img_lbl = self._thumb_frames[i]
             page = self.doc[i]
+            dpr = self._thumb_list.devicePixelRatio()
             s = self.THUMB_W / page.rect.width
-            pix = page.get_pixmap(matrix=fitz.Matrix(s, s), alpha=False)
-            new_pm = _fitz_pix_to_qpixmap(pix)
-            self._thumb_imgs[i] = (new_pm, frame, img_lbl)
-            img_lbl.setFixedSize(new_pm.width(), new_pm.height())
+            pix = page.get_pixmap(matrix=fitz.Matrix(s * dpr, s * dpr), alpha=False)
+            new_pm = _fitz_pix_to_qpixmap(pix, dpr)
+            # Evict LRU entry if cache is full
+            if len(self._thumb_cache) >= _THUMB_CACHE_SIZE:
+                evicted_idx, _ = self._thumb_cache.popitem(last=False)
+                if 0 <= evicted_idx < len(self._thumb_frames):
+                    self._thumb_frames[evicted_idx][1].clear()
+                    self._thumb_frames[evicted_idx][1].setStyleSheet(
+                        f"background: {G200}; border: 2px solid {G300}; border-radius: 2px;"
+                    )
+            self._thumb_cache[i] = new_pm
+            img_lbl.setFixedSize(self.THUMB_W, int(pix.height / dpr))
             img_lbl.setPixmap(new_pm)
             img_lbl.setStyleSheet(
                 f"background: {WHITE}; border: 2px solid {G300}; border-radius: 2px;"
@@ -2236,27 +2882,34 @@ class ViewTool(QWidget):
             QTimer.singleShot(0, self._render_thumb_batch)
 
     def _highlight_thumb(self, idx: int):
-        # Clear previous
+        # Clear previous highlight
         if self._highlighted_thumb_frame is not None:
             try:
-                _, frame, img_lbl = self._highlighted_thumb_frame
-                img_lbl.setStyleSheet(
-                    f"background: {WHITE}; border: 2px solid {G300}; border-radius: 2px;"
-                )
+                frame, img_lbl = self._highlighted_thumb_frame
+                prev = self._highlighted_thumb_idx
+                if prev in self._thumb_cache:
+                    img_lbl.setStyleSheet(
+                        f"background: {WHITE}; border: 2px solid {G300}; border-radius: 2px;"
+                    )
+                else:
+                    img_lbl.setStyleSheet(
+                        f"background: {G200}; border: 2px solid {G300}; border-radius: 2px;"
+                    )
             except RuntimeError:
                 pass
-        if 0 <= idx < len(self._thumb_imgs):
-            _, frame, img_lbl = self._thumb_imgs[idx]
+        if 0 <= idx < len(self._thumb_frames):
+            frame, img_lbl = self._thumb_frames[idx]
             img_lbl.setStyleSheet(
                 f"background: {WHITE}; border: 3px solid {BLUE}; border-radius: 2px;"
             )
-            self._highlighted_thumb_frame = self._thumb_imgs[idx]
+            self._highlighted_thumb_frame = self._thumb_frames[idx]
+            self._highlighted_thumb_idx = idx
             # Scroll to thumbnail
             QTimer.singleShot(50, lambda: self._scroll_to_thumb(idx))
 
     def _scroll_to_thumb(self, idx: int):
-        if 0 <= idx < len(self._thumb_imgs):
-            _, frame, _ = self._thumb_imgs[idx]
+        if 0 <= idx < len(self._thumb_frames):
+            frame, _ = self._thumb_frames[idx]
             self._thumb_scroll.ensureWidgetVisible(frame)
 
     # ==================================================================
@@ -2317,6 +2970,23 @@ class ViewTool(QWidget):
         x1, y1 = self._pdf_to_canvas(r.x1, r.y1)
         return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
 
+    def _compute_measure_label(self):
+        if self._measure_start is None or self._measure_end is None:
+            self._measure_label = ""
+            return
+        sx, sy = self._measure_start
+        ex, ey = self._measure_end
+        p1 = fitz.Point(sx - self._page_ox, sy - self._page_oy) * self._inv_mat
+        p2 = fitz.Point(ex - self._page_ox, ey - self._page_oy) * self._inv_mat
+        dx = p2.x - p1.x
+        dy = p2.y - p1.y
+        dist_pt = math.sqrt(dx * dx + dy * dy)
+        dist_mm = dist_pt * 25.4 / 72.0
+        dist_in = dist_pt / 72.0
+        self._measure_label = (
+            f"{dist_pt:.1f} pt  |  {dist_mm:.2f} mm  |  {dist_in:.3f} in"
+        )
+
     # ==================================================================
     # PAGE RENDERING
     # ==================================================================
@@ -2340,55 +3010,50 @@ class ViewTool(QWidget):
     def _render_page(self):
         if not self.doc:
             return
-
         vp = self._scroll_area.viewport()
         cw = max(vp.width(), 300)
         ch = max(vp.height(), 300)
-        page = self.doc[self.current_page]
-        pw, ph = page.rect.width, page.rect.height
+        dpr = self._canvas.devicePixelRatio()
+        self._render_gen += 1
+        gen = self._render_gen
+        try:
+            pdf_bytes = self.doc.tobytes(garbage=0, deflate=False)
+        except Exception:
+            logger.exception("tobytes failed")
+            return
+        worker = _RenderWorker(
+            self._render_signals,
+            gen,
+            pdf_bytes,
+            self.current_page,
+            self.total_pages,
+            self.zoom,
+            self._rotation,
+            dpr,
+            cw,
+            ch,
+            self._view_mode,
+        )
+        self._pool.start(worker)
 
-        if self._rotation in (90, 270):
-            pw, ph = ph, pw
-
-        if self.zoom == FIT_PAGE:
-            fw, fh = cw - 40, ch - 40
-            scale = min(fw / pw, fh / ph)
-            scale = max(scale, 0.05)
-        elif self.zoom == FIT_WIDTH:
-            scale = (cw - 40) / pw
-            scale = max(scale, 0.05)
-        else:
-            scale = self.zoom
-
-        mat = fitz.Matrix(scale, scale).prerotate(self._rotation)
-        self._render_mat = mat
-        self._inv_mat = ~mat
-
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        pm = _fitz_pix_to_qpixmap(pix)
-        iw, ih = pm.width(), pm.height()
-
-        if self.zoom == FIT_PAGE:
-            canvas_w = max(cw, iw)
-            canvas_h = max(ch, ih)
-            ox = (canvas_w - iw) / 2
-            oy = (canvas_h - ih) / 2
-        else:
-            pad = 20
-            canvas_w = max(iw + pad * 2, cw)
-            canvas_h = max(ih + pad * 2, ch)
-            ox = (canvas_w - iw) / 2
-            oy = pad
-
-        self._page_ox = ox
-        self._page_oy = oy
-        self._page_iw = float(iw)
-        self._page_ih = float(ih)
-
-        self._canvas.setFixedSize(int(canvas_w), int(canvas_h))
-        self._canvas.set_pixmap(pm)
-
-        # Overlay form widgets
+    def _on_render_done(self, result: dict):
+        if result.get("gen") != self._render_gen:
+            return
+        pm1 = QPixmap.fromImage(result["img1"])
+        img2 = result.get("img2")
+        pm2 = QPixmap.fromImage(img2) if img2 is not None else None
+        scale = result["scale"]
+        rotation = result["rotation"]
+        self._render_mat = fitz.Matrix(scale, scale).prerotate(rotation)
+        self._inv_mat = ~self._render_mat
+        self._page_ox = result["page_ox"]
+        self._page_oy = result["page_oy"]
+        self._page2_ox = result["page2_ox"]
+        self._page2_oy = result["page2_oy"]
+        self._page_iw = result["page_iw"]
+        self._page_ih = result["page_ih"]
+        self._canvas.setFixedSize(result["canvas_w"], result["canvas_h"])
+        self._canvas.set_pixmap(pm1, pm2)
         self._draw_form_widgets()
 
     def _escape(self):
@@ -2408,12 +3073,14 @@ class ViewTool(QWidget):
         self._show_page(0)
 
     def _prev_page(self):
+        step = 2 if self._view_mode == ViewMode.TWO_UP else 1
         if self.current_page > 0:
-            self._show_page(self.current_page - 1)
+            self._show_page(max(0, self.current_page - step))
 
     def _next_page(self):
+        step = 2 if self._view_mode == ViewMode.TWO_UP else 1
         if self.current_page < self.total_pages - 1:
-            self._show_page(self.current_page + 1)
+            self._show_page(min(self.total_pages - 1, self.current_page + step))
 
     def _last_page(self):
         if self.total_pages > 0:
@@ -2436,6 +3103,21 @@ class ViewTool(QWidget):
         self._update_zoom_label()
         if self.doc:
             self._show_page(self.current_page)
+
+    def _set_mode_single(self):
+        self._view_mode = ViewMode.SINGLE
+        self._btn_mode_single.setChecked(True)
+        self._btn_mode_twoup.setChecked(False)
+        if self.doc:
+            self._canvas.set_pixmap(self._canvas._pixmap)
+            self._render_page()
+
+    def _set_mode_twoup(self):
+        self._view_mode = ViewMode.TWO_UP
+        self._btn_mode_single.setChecked(False)
+        self._btn_mode_twoup.setChecked(True)
+        if self.doc:
+            self._render_page()
 
     def _zoom_fit_width(self):
         self.zoom = FIT_WIDTH
@@ -2536,6 +3218,10 @@ class ViewTool(QWidget):
 
     def _hide_search(self):
         self._search_bar.setVisible(False)
+        self._results_panel.setVisible(False)
+        for btn in self._result_rows:
+            btn.setParent(None)
+        self._result_rows.clear()
         self._search_visible = False
         self._search_results.clear()
         self._search_flat.clear()
@@ -2543,6 +3229,80 @@ class ViewTool(QWidget):
         self._search_count_lbl.setText("")
         if self.doc:
             self._canvas.update()
+
+    def _populate_results_panel(self):
+        for btn in self._result_rows:
+            btn.setParent(None)
+        self._result_rows.clear()
+        # Remove stretch added at construction
+        while self._results_layout.count():
+            item = self._results_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        for j, (pg, rect) in enumerate(self._search_flat):
+            page = self.doc[pg]
+            snippet = page.get_text("text", clip=rect).strip().replace("\n", " ")[:80]
+            label = f"p.{pg + 1}  —  {snippet}" if snippet else f"p.{pg + 1}"
+            btn = QPushButton(label)
+            btn.setFlat(True)
+            btn.setStyleSheet(
+                f"QPushButton {{ text-align: left; padding: 6px 12px; "
+                f"font: 12px 'Segoe UI'; color: {G900}; background: {WHITE}; border: none; "
+                f"border-bottom: 1px solid {G100}; }}"
+                f"QPushButton:hover {{ background: {G50}; }}"
+            )
+            idx = j
+            btn.clicked.connect(lambda _checked=False, i=idx: self._jump_to_result(i))
+            self._results_layout.addWidget(btn)
+            self._result_rows.append(btn)
+        self._results_layout.addStretch()
+        self._highlight_result_row()
+
+    def _jump_to_result(self, idx: int):
+        self._search_idx = idx
+        self._goto_search_result()
+
+    def _highlight_result_row(self):
+        for i, btn in enumerate(self._result_rows):
+            if i == self._search_idx:
+                btn.setStyleSheet(
+                    f"QPushButton {{ text-align: left; padding: 6px 12px; "
+                    f"font: 12px 'Segoe UI'; color: {WHITE}; background: {BLUE}; border: none; "
+                    f"border-bottom: 1px solid {G100}; }}"
+                )
+                self._results_panel.ensureWidgetVisible(btn)
+            else:
+                btn.setStyleSheet(
+                    f"QPushButton {{ text-align: left; padding: 6px 12px; "
+                    f"font: 12px 'Segoe UI'; color: {G900}; background: {WHITE}; border: none; "
+                    f"border-bottom: 1px solid {G100}; }}"
+                    f"QPushButton:hover {{ background: {G50}; }}"
+                )
+
+    def _search_page(self, page, query):
+        use_regex = self._search_regex_btn.isChecked()
+        whole_word = self._search_word_btn.isChecked()
+        case_sensitive = self._search_case_btn.isChecked()
+
+        if use_regex or whole_word:
+            flags = 0 if case_sensitive else re.IGNORECASE
+            if use_regex:
+                try:
+                    pat = re.compile(query, flags)
+                except re.error:
+                    return []
+            else:
+                pat = re.compile(r"\b" + re.escape(query) + r"\b", flags)
+            results = []
+            for x0, y0, x1, y1, word, *_ in page.get_text("words"):
+                if pat.search(word):
+                    results.append(fitz.Rect(x0, y0, x1, y1))
+            return results
+
+        flags = fitz.TEXT_PRESERVE_WHITESPACE
+        if not case_sensitive:
+            flags |= fitz.TEXT_INHIBIT_SPACES
+        return page.search_for(query, flags=flags)
 
     def _do_search(self):
         query = self._search_entry.text().strip()
@@ -2552,16 +3312,50 @@ class ViewTool(QWidget):
         self._search_flat.clear()
         for i in range(self.total_pages):
             page = self.doc[i]
-            rects = page.search_for(query)
+            rects = self._search_page(page, query)
             if rects:
                 self._search_results.append((i, rects))
                 for r in rects:
                     self._search_flat.append((i, r))
-        total = len(self._search_flat)
-        if total == 0:
-            self._search_count_lbl.setText("0 results")
-            self._search_idx = -1
+        # Also search annotation content
+        use_regex = self._search_regex_btn.isChecked()
+        whole_word = self._search_word_btn.isChecked()
+        case_sensitive = self._search_case_btn.isChecked()
+        if use_regex or whole_word:
+            flags = 0 if case_sensitive else re.IGNORECASE
+            if use_regex:
+                try:
+                    pattern = re.compile(query, flags)
+                except re.error:
+                    pattern = None
+            else:
+                pattern = re.compile(r"\b" + re.escape(query) + r"\b", flags)
         else:
+            pattern = None
+        for pg_idx in range(self.doc.page_count):
+            page = self.doc[pg_idx]
+            for annot in page.annots():
+                content = annot.info.get("content", "") or ""
+                if not content:
+                    continue
+                if use_regex or whole_word:
+                    if pattern and pattern.search(content):
+                        r = annot.rect
+                        self._search_flat.append((pg_idx, r))
+                else:
+                    needle = query if case_sensitive else query.lower()
+                    haystack = content if case_sensitive else content.lower()
+                    if needle in haystack:
+                        r = annot.rect
+                        self._search_flat.append((pg_idx, r))
+        total = len(self._search_flat)
+        self._populate_results_panel()
+        if total == 0:
+            self._search_count_lbl.setText("No results")
+            self._search_idx = -1
+            self._results_panel.setVisible(False)
+        else:
+            self._results_panel.setVisible(True)
             self._search_idx = 0
             for j, (pg, _) in enumerate(self._search_flat):
                 if pg >= self.current_page:
@@ -2586,7 +3380,8 @@ class ViewTool(QWidget):
             return
         pg, rect = self._search_flat[self._search_idx]
         total = len(self._search_flat)
-        self._search_count_lbl.setText(f"{self._search_idx + 1}/{total}")
+        self._search_count_lbl.setText(f"{self._search_idx + 1} of {total}")
+        self._highlight_result_row()
         if pg != self.current_page:
             self._show_page(pg)
         else:
@@ -2679,11 +3474,23 @@ class ViewTool(QWidget):
                 self._canvas.update()
             return
 
+        # MEASURE uses its own state, not _drag_start
+        if self._tool == Tool.MEASURE:
+            self._measure_start = (cx, cy)
+            self._measure_end = None
+            self._measure_label = ""
+            self._canvas.update()
+            return
+
         self._drag_start = (cx, cy)
         self._drag_current = (cx, cy)
         px, py = self._canvas_to_pdf(cx, cy)
 
-        if self._tool == Tool.FREEHAND:
+        if self._tool == Tool.VIEW:
+            self._selected_words.clear()
+            self._selection_text = ""
+            self._canvas.update()
+        elif self._tool == Tool.FREEHAND:
             self._freehand_pts = [(px, py)]
         elif self._tool == Tool.SIGN:
             self._open_sign_dialog(cx, cy)
@@ -2703,6 +3510,13 @@ class ViewTool(QWidget):
                 self._canvas.update()
             return
 
+        if self._tool == Tool.MEASURE:
+            if self._measure_start is not None:
+                self._measure_end = (cx, cy)
+                self._compute_measure_label()
+                self._canvas.update()
+            return
+
         if self._drag_start is None:
             return
         self._drag_current = (cx, cy)
@@ -2714,6 +3528,11 @@ class ViewTool(QWidget):
         px, py = self._canvas_to_pdf(cx, cy)
 
         if self._tool == Tool.VIEW:
+            sx, sy = self._drag_start
+            start_px, start_py = self._canvas_to_pdf(sx, sy)
+            self._selected_words = self._select_chars_flow(start_px, start_py, px, py)
+            self._selection_text = "".join(w[4] for w in self._selected_words)
+            self._canvas.update()
             return
 
         elif self._tool in (
@@ -2751,6 +3570,13 @@ class ViewTool(QWidget):
                     crop_rect.normalize()
                     flash = (x0c, y0c, x1c - x0c, y1c - y0c)
                     self._do_excerpt(crop_rect, flash_rect=flash)
+            return
+
+        if self._tool == Tool.MEASURE:
+            if self._measure_start is not None:
+                self._measure_end = (cx, cy)
+                self._compute_measure_label()
+                self._canvas.update()
             return
 
         if not self.doc or self._drag_start is None:
@@ -3098,6 +3924,51 @@ class ViewTool(QWidget):
                     combo.show()
                     self._form_widgets.append(combo)
 
+            elif widget.field_type == fitz.PDF_WIDGET_TYPE_LISTBOX:
+                from PySide6.QtWidgets import QListWidget, QAbstractItemView
+
+                choices = widget.choice_values or []
+                lw = QListWidget(self._canvas)
+                lw.addItems(choices)
+                lw.setGeometry(int(x0), int(y0), w, max(h, 60))
+                lw.setStyleSheet(
+                    f"QListWidget {{ background: {WHITE}; border: 1px solid {BLUE}; "
+                    f"color: {G900}; font: {max(9, h - 8)}px 'Segoe UI'; }}"
+                )
+                if widget.field_flags and widget.field_flags & (1 << 21):
+                    lw.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+                else:
+                    lw.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+                current = widget.field_value
+                if isinstance(current, str):
+                    current = [current]
+                for i in range(lw.count()):
+                    if lw.item(i).text() in (current or []):
+                        lw.item(i).setSelected(True)
+                lw._pdf_widget = widget
+                lw.itemSelectionChanged.connect(
+                    lambda lw_=lw: self._update_listbox(lw_)
+                )
+                lw.show()
+                self._form_widgets.append(lw)
+
+            elif (
+                widget.field_type == fitz.PDF_WIDGET_TYPE_BUTTON
+                and widget.field_flags
+                and widget.field_flags & fitz.PDF_BTN_FIELD_IS_PUSHBUTTON
+            ):
+                pb = QPushButton(widget.field_name or "Button", self._canvas)
+                pb.setGeometry(int(x0), int(y0), w, h)
+                pb.setStyleSheet(
+                    f"QPushButton {{ background: {G200}; border: 1px solid {G400}; "
+                    "border-radius: 3px; font: 11px 'Segoe UI'; }"
+                    f"QPushButton:hover {{ background: {G300}; }}"
+                    f"QPushButton:pressed {{ background: {G400}; }}"
+                )
+                pb.setToolTip("Button actions require JavaScript (not supported)")
+                pb.show()
+                self._form_widgets.append(pb)
+
     def _update_form_field(self, entry):
         self._push_undo()
         widget = entry._pdf_widget
@@ -3116,6 +3987,16 @@ class ViewTool(QWidget):
         self._push_undo()
         widget = combo._pdf_widget
         widget.field_value = val
+        widget.update()
+        self._modified = True
+
+    def _update_listbox(self, lw):
+        self._push_undo()
+        widget = lw._pdf_widget
+        selected = [
+            lw.item(i).text() for i in range(lw.count()) if lw.item(i).isSelected()
+        ]
+        widget.field_value = selected[0] if len(selected) == 1 else selected
         widget.update()
         self._modified = True
 
@@ -3140,38 +4021,155 @@ class ViewTool(QWidget):
             self._modified = False
             QMessageBox.information(self, "Saved", f"PDF saved to:\n{path}")
         except Exception as e:
+            logger.exception("save failed")
             QMessageBox.critical(self, "Error", f"Could not save:\n{e}")
 
     def _print_pdf(self):
         if not self.doc:
             return
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dlg = QPrintDialog(printer, self)
+        if dlg.exec() != QPrintDialog.DialogCode.Accepted:
+            return
+        from_page = printer.fromPage()
+        to_page = printer.toPage()
+        total = self.total_pages
+        if from_page == 0 and to_page == 0:
+            pages = range(total)
+        else:
+            pages = range(from_page - 1, min(to_page, total))
+        copies = printer.copyCount()
+        painter = QPainter()
         try:
             tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
             tmp_path = tmp.name
             tmp.close()
+            self._temp_files.append(tmp_path)
+            try:
+                from main import _register_temp
+
+                _register_temp(tmp_path)
+            except ImportError:
+                pass
             self.doc.save(tmp_path)
-            if os.name == "nt":
-                os.startfile(tmp_path, "print")
-            elif os.name == "posix":
-                subprocess.run(["lpr", tmp_path], check=True)
-            else:
-                QMessageBox.information(
-                    self, "Print", f"PDF saved to {tmp_path}\nPlease print it manually."
-                )
+            src = fitz.open(tmp_path)
+            try:
+                mat = fitz.Matrix(2.0, 2.0)
+                painter.begin(printer)
+                first = True
+                for _ in range(copies):
+                    for page_idx in pages:
+                        if not first:
+                            printer.newPage()
+                        first = False
+                        page = src[page_idx]
+                        pix = page.get_pixmap(matrix=mat, alpha=False)
+                        img = QImage(
+                            pix.samples,
+                            pix.width,
+                            pix.height,
+                            pix.stride,
+                            QImage.Format.Format_RGB888,
+                        )
+                        painter.drawImage(
+                            printer.pageRect(QPrinter.Unit.DevicePixel), img
+                        )
+            finally:
+                src.close()
         except Exception as e:
+            logger.exception("print failed")
             QMessageBox.critical(self, "Error", f"Print failed:\n{e}")
+        finally:
+            if painter.isActive():
+                painter.end()
+
+    # ==================================================================
+    # FORM DATA EXPORT
+    # ==================================================================
+
+    _FIELD_TYPE_NAMES = {
+        0: "unknown",
+        1: "button",
+        2: "checkbox",
+        3: "radiobutton",
+        4: "text",
+        5: "listbox",
+        6: "combobox",
+        7: "signature",
+    }
+
+    def _collect_form_data(self) -> list[dict]:
+        rows = []
+        for i in range(self.total_pages):
+            page = self.doc[i]
+            for w in page.widgets():
+                field_type_int = getattr(w, "field_type", 0)
+                rows.append(
+                    {
+                        "page": i + 1,
+                        "name": w.field_name or "",
+                        "type": self._FIELD_TYPE_NAMES.get(field_type_int, "unknown"),
+                        "value": w.field_value,
+                    }
+                )
+        return rows
+
+    def _export_form_data(self):
+        if not self.doc:
+            return
+        try:
+            rows = self._collect_form_data()
+        except Exception:
+            logger.exception("collect form data failed")
+            return
+        if not rows:
+            QMessageBox.information(self, "No Fields", "This PDF has no form fields.")
+            return
+        stem = Path(self.pdf_path).stem if self.pdf_path else "form"
+        path, filt = QFileDialog.getSaveFileName(
+            self,
+            "Export Form Data",
+            stem + "_form_data",
+            "JSON (*.json);;CSV (*.csv)",
+        )
+        if not path:
+            return
+        try:
+            if filt.startswith("CSV") or path.lower().endswith(".csv"):
+                if not path.lower().endswith(".csv"):
+                    path += ".csv"
+                self._write_form_csv(rows, path)
+            else:
+                if not path.lower().endswith(".json"):
+                    path += ".json"
+                self._write_form_json(rows, path)
+            QMessageBox.information(self, "Exported", f"Form data saved to:\n{path}")
+        except Exception as exc:
+            logger.exception("form export failed")
+            QMessageBox.critical(self, "Export Failed", str(exc))
+
+    def _write_form_json(self, rows: list[dict], path: str) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rows, f, indent=2, ensure_ascii=False, default=str)
+
+    def _write_form_csv(self, rows: list[dict], path: str) -> None:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["page", "name", "type", "value"])
+            writer.writeheader()
+            writer.writerows(rows)
 
     # ==================================================================
     # CLEANUP
     # ==================================================================
 
     def cleanup(self):
-        if self._thumb_timer is not None:
-            self._thumb_timer = None
-        self._clear_form_widgets()
-        if self.doc:
-            self.doc.close()
-            self.doc = None
+        self._pane.cleanup()
+        for p in self._temp_files:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        self._temp_files.clear()
 
     def closeEvent(self, event):
         self.cleanup()
