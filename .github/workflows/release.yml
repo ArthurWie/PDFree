@@ -39,7 +39,7 @@ jobs:
         run: pip-audit
 
       - name: Run tests
-        run: pytest --tb=short -q --cov=. --cov-report=term-missing --cov-fail-under=18
+        run: pytest --tb=short -q --cov=. --cov-report=term-missing --cov-fail-under=28
 
 
   # ──────────────────────────────────────────────
