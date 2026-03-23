@@ -1066,6 +1066,17 @@ class _RenderPane(QWidget):
 
     def _build_ui(self):
         self._canvas = PDFCanvas(self)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self._scroll_area = QScrollArea()
+        self._scroll_area.setWidgetResizable(False)
+        self._scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._scroll_area.setStyleSheet(
+            f"QScrollArea {{ background: {G50}; border: none; }}"
+        )
+        self._scroll_area.setWidget(self._canvas)
+        lay.addWidget(self._scroll_area)
 
     def load(self, path: str):
         try:
@@ -1347,6 +1358,19 @@ class ViewTool(QWidget):
     def _canvas(self):
         return self.active_pane._canvas
 
+    @property
+    def _scroll_area(self):
+        """Return scroll area for the active document (tab pane in tab mode, legacy otherwise)."""
+        if (
+            hasattr(self, "_tab_widget")
+            and self._tab_widget is not None
+            and self._tab_widget.isVisible()
+        ):
+            pane = self.active_pane
+            if pane is not None and pane is not self._pane:
+                return pane._scroll_area
+        return self._vt_scroll_area
+
     def __init__(self, parent=None, initial_path: str = "", back_callback=None):
         super().__init__(parent)
         self._back_callback = back_callback
@@ -1499,7 +1523,7 @@ class ViewTool(QWidget):
         add_btn = _hbtn(
             "+ Add PDF", bg=GREEN, hover="#15803D", fg=WHITE, border=GREEN, bold=True
         )
-        add_btn.clicked.connect(self._add_pdf)
+        add_btn.clicked.connect(self._open_file_dialog)
         left_lay.addWidget(add_btn)
 
         # Hidden labels for compatibility (file name is no longer shown in toolbar)
@@ -1772,16 +1796,16 @@ class ViewTool(QWidget):
         cc_lay.setContentsMargins(0, 0, 0, 0)
         cc_lay.setSpacing(0)
 
-        self._scroll_area = QScrollArea()
-        self._scroll_area.setWidgetResizable(False)
-        self._scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._scroll_area.setStyleSheet(
+        self._vt_scroll_area = QScrollArea()
+        self._vt_scroll_area.setWidgetResizable(False)
+        self._vt_scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._vt_scroll_area.setStyleSheet(
             f"QScrollArea {{ background: {G50}; border: none; }}"
         )
 
-        self._scroll_area.setWidget(self._pane._canvas)
+        self._vt_scroll_area.setWidget(self._pane._canvas)
 
-        cc_lay.addWidget(self._scroll_area)
+        cc_lay.addWidget(self._vt_scroll_area)
 
         # Search bar (hidden initially)
         self._search_bar = QWidget()
@@ -1996,6 +2020,12 @@ class ViewTool(QWidget):
         self._tab_widget.setVisible(False)
         self._tab_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tab_widget.customContextMenuRequested.connect(self._show_tab_context_menu)
+        add_tab_btn = QPushButton("+")
+        add_tab_btn.setFixedSize(28, 24)
+        add_tab_btn.setToolTip("Open PDF in new tab")
+        add_tab_btn.clicked.connect(self._open_file_dialog)
+        self._tab_widget.setCornerWidget(add_tab_btn, Qt.Corner.TopRightCorner)
+        cc_lay.insertWidget(0, self._tab_widget)
 
     # -- Reusable button factories ------------------------------------
 
@@ -2908,6 +2938,11 @@ class ViewTool(QWidget):
     # ==================================================================
     # FILE LOADING
     # ==================================================================
+
+    def _open_file_dialog(self):
+        p, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
+        if p:
+            self.open_file(p)
 
     def _pick_pdf(self):
         p, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
@@ -4376,6 +4411,7 @@ class ViewTool(QWidget):
         # Now load, which will emit page_changed
         pane.load(path)
         self._tab_widget.setVisible(True)
+        self._vt_scroll_area.setVisible(False)
 
     def _make_tab_label(self, path: str, modified: bool) -> str:
         name = Path(path).stem
