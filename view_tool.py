@@ -3475,7 +3475,10 @@ class ViewTool(QWidget):
         self._continuous_pane = _ContinuousPane(pane.pdf_path, zoom=zoom, parent=pane)
         pane.layout().insertWidget(0, self._continuous_pane)
         self._continuous_pane.page_changed.connect(self._on_continuous_page_changed)
-        QTimer.singleShot(50, lambda: self._continuous_pane.scroll_to_page(self.current_page))
+        QTimer.singleShot(
+            50,
+            lambda: self._continuous_pane and self._continuous_pane.scroll_to_page(self.current_page),
+        )
 
     def _teardown_continuous(self) -> None:
         if self._continuous_pane is None:
@@ -4723,9 +4726,7 @@ class ViewTool(QWidget):
         self._btn_split.setChecked(False)
 
     def cleanup(self):
-        if self._continuous_pane is not None:
-            self._continuous_pane.close()
-            self._continuous_pane = None
+        self._teardown_continuous()
         if self._split_right_pane is not None:
             self._split_right_pane.cleanup()
             self._split_right_pane = None
