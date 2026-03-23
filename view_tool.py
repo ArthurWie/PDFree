@@ -91,6 +91,7 @@ from colors import (
     BLUE,
     BLUE_HOVER,
     GREEN,
+    GREEN_HOVER,
     G50,
     G100,
     G200,
@@ -1449,10 +1450,10 @@ class ViewTool(QWidget):
 
         self._build_ui()
         self._install_shortcuts()
+        self._update_open_btn()
 
         if initial_path:
-            self.pdf_path = initial_path
-            self._load_pdf()
+            self.open_file(initial_path)
 
     # ==================================================================
     # BUILD UI
@@ -1501,9 +1502,9 @@ class ViewTool(QWidget):
             )
             return b
 
-        open_btn = _hbtn("Open")
-        open_btn.clicked.connect(self._pick_pdf)
-        left_lay.addWidget(open_btn)
+        self._open_btn = _hbtn("Open PDF")
+        self._open_btn.clicked.connect(self._open_or_add_pdf)
+        left_lay.addWidget(self._open_btn)
 
         save_btn = _hbtn("Save")
         save_btn.clicked.connect(self._save_pdf)
@@ -1516,14 +1517,6 @@ class ViewTool(QWidget):
         export_form_btn = _hbtn("Export Form")
         export_form_btn.clicked.connect(self._export_form_data)
         left_lay.addWidget(export_form_btn)
-
-        left_lay.addSpacing(8)
-
-        add_btn = _hbtn(
-            "+ Add PDF", bg=GREEN, hover="#15803D", fg=WHITE, border=GREEN, bold=True
-        )
-        add_btn.clicked.connect(self._open_file_dialog)
-        left_lay.addWidget(add_btn)
 
         # Hidden labels for compatibility (file name is no longer shown in toolbar)
         self._file_lbl = QLabel()
@@ -2036,7 +2029,7 @@ class ViewTool(QWidget):
         add_tab_btn = QPushButton("+")
         add_tab_btn.setFixedSize(28, 24)
         add_tab_btn.setToolTip("Open PDF in new tab")
-        add_tab_btn.clicked.connect(self._open_file_dialog)
+        add_tab_btn.clicked.connect(self._open_or_add_pdf)
         self._tab_widget.setCornerWidget(add_tab_btn, Qt.Corner.TopRightCorner)
         cc_lay.insertWidget(0, self._tab_widget)
 
@@ -2952,17 +2945,31 @@ class ViewTool(QWidget):
     # FILE LOADING
     # ==================================================================
 
-    def _open_file_dialog(self):
+    def _open_or_add_pdf(self):
         p, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if p:
             self.open_file(p)
 
-    def _pick_pdf(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
-        if not p:
+    def _update_open_btn(self):
+        if not hasattr(self, "_open_btn"):
             return
-        self.pdf_path = p
-        self._load_pdf()
+        has_tabs = self._tab_widget.count() > 0
+        if has_tabs:
+            self._open_btn.setText("+ Add PDF")
+            self._open_btn.setStyleSheet(
+                f"QPushButton {{ background: {GREEN}; color: {WHITE}; "
+                f"border: 1px solid {GREEN}; border-radius: 8px; "
+                f"font: bold 13px 'Segoe UI'; padding: 0 16px; }}"
+                f"QPushButton:hover {{ background: {GREEN_HOVER}; }}"
+            )
+        else:
+            self._open_btn.setText("Open PDF")
+            self._open_btn.setStyleSheet(
+                f"QPushButton {{ background: {WHITE}; color: {G700}; "
+                f"border: 1px solid {G300}; border-radius: 8px; "
+                f"font: 13px 'Segoe UI'; padding: 0 16px; }}"
+                f"QPushButton:hover {{ background: {G100}; }}"
+            )
 
     def _load_pdf(self):
         try:
@@ -3004,34 +3011,6 @@ class ViewTool(QWidget):
             self.total_pages = 0
             logger.exception("could not open pdf")
             QMessageBox.critical(self, "Error", f"Could not load PDF:\n{e}")
-
-    def _add_pdf(self):
-        if not self.doc:
-            self._pick_pdf()
-            return
-        p, _ = QFileDialog.getOpenFileName(self, "Add PDF", "", "PDF Files (*.pdf)")
-        if not p:
-            return
-        try:
-            self._push_undo()
-            src = fitz.open(p)
-            try:
-                self.doc.insert_pdf(src)
-            finally:
-                src.close()
-            self.total_pages = len(self.doc)
-            self._modified = True
-
-            name = Path(self.pdf_path).name
-            self._file_lbl.setText(f"{name} (+{Path(p).name})")
-            self._total_lbl.setText(str(self.total_pages))
-
-            self._render_thumbnails()
-            self._build_toc()
-            self._show_page(self.current_page)
-        except (FileNotFoundError, RuntimeError) as e:
-            logger.exception("could not open pdf")
-            QMessageBox.critical(self, "Error", f"Could not add PDF:\n{e}")
 
     # ==================================================================
     # THUMBNAILS
@@ -4429,6 +4408,7 @@ class ViewTool(QWidget):
         self._build_toc()
         self._tab_widget.setVisible(True)
         self._vt_scroll_area.setVisible(False)
+        self._update_open_btn()
 
     def _make_tab_label(self, path: str, modified: bool) -> str:
         name = Path(path).stem
@@ -4504,6 +4484,7 @@ class ViewTool(QWidget):
         self._tab_widget.removeTab(index)
         if self._tab_widget.count() == 0:
             self._tab_widget.setVisible(False)
+        self._update_open_btn()
 
     def _on_tab_changed(self, index: int):
         self._update_zoom_label()

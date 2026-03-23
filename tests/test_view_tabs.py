@@ -1,11 +1,12 @@
 """Tests for QTabWidget multi-document support in ViewTool."""
+
 import sys
 import pytest
-from pathlib import Path
 
 
 def _get_or_create_app():
     from PySide6.QtWidgets import QApplication
+
     return QApplication.instance() or QApplication(sys.argv)
 
 
@@ -16,8 +17,8 @@ def qapp():
 
 @pytest.fixture
 def pdf_file(tmp_path):
-    """Create a minimal valid PDF for testing."""
     import fitz
+
     doc = fitz.open()
     doc.new_page()
     p = tmp_path / "test.pdf"
@@ -28,8 +29,8 @@ def pdf_file(tmp_path):
 
 @pytest.fixture
 def pdf_file2(tmp_path):
-    """Create a second minimal PDF."""
     import fitz
+
     doc = fitz.open()
     doc.new_page()
     doc.new_page()
@@ -41,8 +42,10 @@ def pdf_file2(tmp_path):
 
 def test_tab_widget_exists(qapp):
     from view_tool import ViewTool
+
     vt = ViewTool()
     from PySide6.QtWidgets import QTabWidget
+
     assert hasattr(vt, "_tab_widget")
     assert isinstance(vt._tab_widget, QTabWidget)
     vt.cleanup()
@@ -50,6 +53,7 @@ def test_tab_widget_exists(qapp):
 
 def test_open_file_creates_tab(qapp, pdf_file):
     from view_tool import ViewTool
+
     vt = ViewTool()
     vt.open_file(pdf_file)
     assert vt._tab_widget.count() == 1
@@ -58,6 +62,7 @@ def test_open_file_creates_tab(qapp, pdf_file):
 
 def test_open_two_files_creates_two_tabs(qapp, pdf_file, pdf_file2):
     from view_tool import ViewTool
+
     vt = ViewTool()
     vt.open_file(pdf_file)
     vt.open_file(pdf_file2)
@@ -67,6 +72,7 @@ def test_open_two_files_creates_two_tabs(qapp, pdf_file, pdf_file2):
 
 def test_open_duplicate_focuses_existing_tab(qapp, pdf_file):
     from view_tool import ViewTool
+
     vt = ViewTool()
     vt.open_file(pdf_file)
     vt.open_file(pdf_file)  # same file again
@@ -76,6 +82,7 @@ def test_open_duplicate_focuses_existing_tab(qapp, pdf_file):
 
 def test_active_pane_matches_current_tab(qapp, pdf_file, pdf_file2):
     from view_tool import ViewTool
+
     vt = ViewTool()
     vt.open_file(pdf_file)
     vt.open_file(pdf_file2)
@@ -91,6 +98,7 @@ def test_active_pane_matches_current_tab(qapp, pdf_file, pdf_file2):
 
 def test_modified_aggregate(qapp, pdf_file, pdf_file2):
     from view_tool import ViewTool
+
     vt = ViewTool()
     vt.open_file(pdf_file)
     vt.open_file(pdf_file2)
@@ -105,6 +113,7 @@ def test_modified_aggregate(qapp, pdf_file, pdf_file2):
 
 def test_close_tab_removes_pane(qapp, pdf_file, pdf_file2):
     from view_tool import ViewTool
+
     vt = ViewTool()
     vt.open_file(pdf_file)
     vt.open_file(pdf_file2)
@@ -116,6 +125,7 @@ def test_close_tab_removes_pane(qapp, pdf_file, pdf_file2):
 
 def test_cleanup_closes_all_panes(qapp, pdf_file, pdf_file2):
     from view_tool import ViewTool
+
     vt = ViewTool()
     vt.open_file(pdf_file)
     vt.open_file(pdf_file2)
@@ -131,8 +141,13 @@ def test_close_unmodified_tab_no_dialog(qapp, pdf_file, monkeypatch):
     """Unmodified tab closes immediately without showing a dialog."""
     from view_tool import ViewTool
     from PySide6.QtWidgets import QMessageBox
+
     dialog_shown = []
-    monkeypatch.setattr(QMessageBox, "exec", lambda self: dialog_shown.append(True) or QMessageBox.StandardButton.Discard)
+    monkeypatch.setattr(
+        QMessageBox,
+        "exec",
+        lambda self: dialog_shown.append(True) or QMessageBox.StandardButton.Discard,
+    )
     vt = ViewTool()
     vt.open_file(pdf_file)
     vt._close_tab(0)
@@ -193,6 +208,7 @@ def test_quit_with_no_unsaved_accepts_event(qapp, pdf_file):
     """closeEvent accepts normally when no panes are modified."""
     from view_tool import ViewTool
     from PySide6.QtGui import QCloseEvent
+
     vt = ViewTool()
     vt.open_file(pdf_file)
     event = QCloseEvent()
@@ -254,4 +270,44 @@ def test_quit_with_unsaved_dialog_cancel_ignores_event(qapp, pdf_file, monkeypat
     event = QCloseEvent()
     vt.closeEvent(event)
     assert not event.isAccepted()
+    vt.cleanup()
+
+
+def test_open_btn_initial_label(qapp):
+    """Button reads 'Open PDF' when no tabs are open."""
+    from view_tool import ViewTool
+
+    vt = ViewTool()
+    assert hasattr(vt, "_open_btn")
+    assert vt._open_btn.text() == "Open PDF"
+    vt.cleanup()
+
+
+def test_open_btn_label_after_open(qapp, pdf_file):
+    """Button reads '+ Add PDF' after a file is opened."""
+    from view_tool import ViewTool
+
+    vt = ViewTool()
+    vt.open_file(pdf_file)
+    assert vt._open_btn.text() == "+ Add PDF"
+    vt.cleanup()
+
+
+def test_open_btn_label_after_close_all(qapp, pdf_file):
+    """Button reverts to 'Open PDF' after the last tab is closed."""
+    from view_tool import ViewTool
+
+    vt = ViewTool()
+    vt.open_file(pdf_file)
+    vt._close_tab(0)
+    assert vt._open_btn.text() == "Open PDF"
+    vt.cleanup()
+
+
+def test_open_btn_label_with_initial_path(qapp, pdf_file):
+    """Button reads '+ Add PDF' when ViewTool is constructed with initial_path."""
+    from view_tool import ViewTool
+
+    vt = ViewTool(initial_path=pdf_file)
+    assert vt._open_btn.text() == "+ Add PDF"
     vt.cleanup()
