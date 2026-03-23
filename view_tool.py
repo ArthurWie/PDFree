@@ -1099,8 +1099,7 @@ class _RenderPane(QWidget):
             last = max(0, self._page_count - 1)
         self._current_page = last
         self.page_changed.emit(last)
-        if last > 0:
-            self._view_tool._show_page(last)
+        self._view_tool._show_page(last)
 
     def _update_link_cache(self):
         self._link_cache = []
@@ -4408,8 +4407,12 @@ class ViewTool(QWidget):
         pane.page_changed.connect(
             lambda page, p=pane: LibraryState().set_last_page(p.path, page)
         )
-        # Now load, which will emit page_changed
+        # Install viewport resize filter so FIT_PAGE/FIT_WIDTH re-render on resize
+        pane._scroll_area.viewport().installEventFilter(self._vp_filter)
+        # Now load, which will emit page_changed and trigger _show_page
         pane.load(path)
+        self._render_thumbnails()
+        self._build_toc()
         self._tab_widget.setVisible(True)
         self._vt_scroll_area.setVisible(False)
 
