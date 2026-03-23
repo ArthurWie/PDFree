@@ -3241,7 +3241,7 @@ class ViewTool(QWidget):
         self._page_ih = result["page_ih"]
         self._canvas.setFixedSize(result["canvas_w"], result["canvas_h"])
         self._canvas.set_pixmap(pm1, pm2)
-        self._pane._update_link_cache()
+        self.active_pane._update_link_cache()
         self._draw_form_widgets()
 
     def _escape(self):
