@@ -42,17 +42,14 @@ The viewer supports single-page and two-up modes only. Every mainstream PDF view
 
 **What is needed:** A `ViewMode.CONTINUOUS` enum value in `view_tool.py`. The render pane replaces the single `QLabel` canvas with a `QScrollArea` containing a `QVBoxLayout` of per-page `QLabel` widgets, rendered lazily as the user scrolls. The existing `FIT_PAGE` / `FIT_WIDTH` zoom logic applies per-page. The undo/redo stack and search highlight overlay must be adapted to the multi-canvas model.
 
-### No interactive form fill and save (P1)
-The AcroForm overlay renders form widgets visually but the user cannot fill a form and save it from within the viewer. The workflow today requires separate tools: open in viewer, close it, open `form_unlock_tool`, export data. There is no "fill this form → save" path. For everyday document workflows, this is essential.
+**Note on sequencing:** Implementing continuous scroll will add significant code to the already-large `view_tool.py` (4641 lines). The `view_tool.py` module split (see Dimension 4) is deferred to post-launch, but developers should be aware that implementing continuous scroll first will compound the cost of splitting the file later.
 
-**What is needed:** The existing read-only AcroForm overlay widgets (text, checkbox, combo, radio, list, button) in `view_tool.py` need to become editable. On save (`Ctrl+S` or Save button), field values are written back to the PDF via `fitz.Widget.update()` before `fitz.Document.save()`.
+### Form fill: radio button write-back and in-place save missing (P1)
+Form fill is largely implemented: `_update_form_field`, `_update_checkbox`, `_update_combo`, and `_update_listbox` all write back to `fitz.Widget` and a Save button persists changes. Two gaps remain: (1) radio button groups do not write back on selection change; (2) the save flow always opens a file dialog even when saving in-place, which breaks the expected `Ctrl+S` = "save to same file" convention.
 
-### No thumbnail sidebar in viewer (P1)
-There is no page thumbnail panel in the viewer. Navigating a 100-page document requires the page number input or key presses. All professional PDF viewers have a left sidebar for quick navigation.
+**What is needed:** Add `_update_radio` that iterates the radio group and sets `field_value` on the selected button. Change `_save_pdf` to skip the dialog and overwrite in-place when the document was opened from an existing path and no explicit "Save As" was triggered.
 
-**What is needed:** A collapsible `QDockWidget` or fixed left panel containing a `QListWidget` of page thumbnails (rendered at ~120px width). Clicking a thumbnail jumps to that page. Thumbnails reuse the existing LRU cache in `view_tool.py`.
-
-### Batch tool covers only 4 operations (P1)
+### Expand batch tool to all operations (P1)
 `batch_tool.py` exposes compress, rotate, add page numbers, and add/remove password. There are 42 tools. Power users who want to batch-watermark, batch-redact, batch-convert to PDF/A, or batch-extract images have no path. This is a significant limitation for the use case where PDFree is strongest: local processing of many files at once.
 
 **What is needed:** Refactor `batch_tool.py` to drive operations through the tool registry rather than a hardcoded list. Each tool that supports a headless "apply to file" interface exposes a `batch_apply(input_path, output_path, **kwargs) -> None` classmethod. The batch UI generates per-operation option panels dynamically.
@@ -66,11 +63,13 @@ Text selection in the viewer is flow-based. Users cannot select a precise phrase
 
 ## Dimension 3 — Developer Experience & Tooling
 
-### 22 of 42 tools have no unit tests (P0)
-More than half the tool surface area has no dedicated tests. The untested tools include the most-used operations: split, merge, compress, rotate, crop, remove, reorder, extract images, flatten, headers/footers, compare, add page numbers, change metadata, add image, and all conversion tools. A regression in `compress_tool.py` or `rotate_tool.py` would ship undetected.
+### 28+ tools have no unit tests (P0)
+More than half the tool surface area has no dedicated tests. The tested tools (sign, validate, pdfa, form_export, form_unlock, bookmarks, page_labels, font_info, svg_to_pdf, redact, batch, pdf_to_csv) are mostly newer additions; `watermark_tool` has integration-level coverage only. The core workhorse operations — the ones users run most often — are untested. A regression in `compress_tool.py` or `rotate_tool.py` would ship undetected.
 
-**Untested tools (22):**
-`split_tool`, `merge_tool`, `compress_tool`, `rotate_tool`, `crop_tool`, `remove_tool`, `reorder_tool`, `compare_tool`, `extract_images_tool`, `flatten_tool`, `headers_footers_tool`, `remove_annotations_tool`, `change_metadata_tool`, `add_image_tool`, `add_page_numbers_tool`, `sanitize_tool`, `img_to_pdf_tool`, `pdf_to_word_tool`, `pdf_to_img_tool`, `html_to_pdf_tool`, `office_to_pdf_tool`, `ocr_tool`
+**Untested tools (at minimum 28):**
+`split_tool`, `merge_tool`, `compress_tool`, `rotate_tool`, `crop_tool`, `remove_tool`, `reorder_tool`, `nup_tool`, `scale_pages_tool`, `excerpt_tool`, `compare_tool`, `extract_images_tool`, `flatten_tool`, `headers_footers_tool`, `remove_annotations_tool`, `change_metadata_tool`, `add_image_tool`, `add_page_numbers_tool`, `add_password_tool`, `remove_password_tool`, `sanitize_tool`, `img_to_pdf_tool`, `pdf_to_word_tool`, `pdf_to_img_tool`, `pdf_to_excel_tool`, `html_to_pdf_tool`, `office_to_pdf_tool`, `ocr_tool`
+
+Note: `split_tool`, `merge_tool`, `compress_tool`, and `watermark_tool` are touched in `test_integration.py` but have no dedicated unit tests for their workers or edge cases. `add_password_tool` and `remove_password_tool` are tested indirectly via `test_batch_tool.py`'s batch helpers, not via their own standalone tool workers.
 
 **What is needed:** One test file per tool, testing the worker's `run()` method directly with a real PDF fixture from `tests/corpus/`. Each test verifies the output file exists, is a valid PDF, and the operation had the expected effect (e.g., split produces N files, rotate changes page rotation, compress reduces file size).
 
@@ -80,7 +79,7 @@ More than half the tool surface area has no dedicated tests. The untested tools 
 **What is needed:** Add `ruff format --check .` and `ruff check .` steps to the `test` job in `release.yml`, before pytest runs.
 
 ### No code coverage reporting (P1)
-pytest runs on every push but no coverage metrics are collected. The 22-tool testing gap is invisible to reviewers and maintainers.
+pytest runs on every push but no coverage metrics are collected. The 26+ tool testing gap is invisible to reviewers and maintainers.
 
 **What is needed:** Add `pytest-cov` to dev dependencies. Run `pytest --cov=. --cov-report=term-missing --cov-fail-under=60` in CI. Set the initial threshold at 60% and raise it as tests are added.
 
@@ -98,7 +97,7 @@ The two-panel layout + `QThread` worker pattern is consistent across all 42 tool
 
 **What is needed:** An abstract `BaseTool(QWidget)` in a new `base_tool.py` with `@abstractmethod cleanup()` and `@property _modified`. Tools opt into the `batch_apply` interface by implementing a classmethod. Existing tools migrate incrementally — the base class is introduced and tools are migrated one at a time without breaking the app.
 
-### `view_tool.py` is 4641 lines (P1)
+### `view_tool.py` is 4641 lines (P1 — deferred to post-launch)
 The viewer contains the annotation suite, search bar, form overlay, two-up mode, printing, measurement tool, link handling, undo/redo, and thumbnail cache in one file. This is the highest-risk file for merge conflicts and regressions.
 
 **What is needed:** Extract into four focused modules:
@@ -109,15 +108,17 @@ The viewer contains the annotation suite, search bar, form overlay, two-up mode,
 
 `view_tool.py` becomes the assembly shell (~500 lines).
 
+**Sequencing note:** This is deferred because it carries Large effort with no v1.0 blocker status. However, implementing continuous scroll (Sprint 2) will expand this file further. Every sprint that modifies `view_tool.py` before the split compounds the eventual migration cost.
+
 ### Batch tool processes files sequentially (P2)
 `batch_tool.py` uses a single `QThread` and processes files one at a time. The `worker_semaphore` exists to safely cap concurrency but the batch tool does not use it.
 
 **What is needed:** Spawn one `_BatchItemWorker` per file. Each worker acquires the semaphore before running and releases it on completion. The UI collects signals from all workers and updates per-file status rows independently.
 
-### Duplicate `_PreviewCanvas` (P2)
-`split_tool.py` and `pdf_to_csv_tool.py` each define their own `_PreviewCanvas` independently. A bug in one is unlikely to be fixed in the other.
+### `_PreviewCanvas` duplicated across 8 files (P1)
+At least 8 tool files define their own preview canvas widget independently: `add_page_numbers_tool.py`, `img_to_pdf_tool.py`, `headers_footers_tool.py`, `pdf_to_csv_tool.py`, `pdf_to_excel_tool.py`, `split_tool.py`, `sign_tool.py`, and `watermark_tool.py`. A bug in one implementation is unlikely to be fixed in the others. This is a systemic pattern, not a cosmetic cleanup.
 
-**What is needed:** Extract a shared `PreviewCanvas(QLabel)` into `utils.py` or a new `widgets.py`. Both tools import it.
+**What is needed:** Extract a shared `PreviewCanvas(QLabel)` into `utils.py` or a new `widgets.py`. All 8 files import it. Effort is Medium given the number of call sites.
 
 ---
 
@@ -131,10 +132,10 @@ On Windows, if the target PDF is open in another application, `fitz.save()` fail
 
 **What is needed:** In each tool worker's `run()` method, wrap the initial file open in a targeted `PermissionError` handler before the main operation begins. Alternatively, add a shared `assert_file_writable(path)` utility in `utils.py` that probes write access before the worker starts.
 
-### Auto-updater is detect-only (P2)
-`updater.py` detects a newer release and shows a banner, but the user must manually navigate to the release page and download. A direct link to the platform-specific download URL in the banner would remove one friction step without requiring auto-install infrastructure.
+### Auto-updater emits release page URL, not binary download URL (P2)
+`updater.py` detects a newer release and `_on_update_available` in `main.py` opens the GitHub release page in the browser when the user clicks Yes. This is functional but requires the user to manually identify and download the correct platform-specific binary from the release page. The remaining gap is small: the signal currently emits `html_url` (the release page) rather than the platform-specific asset URL from the `assets` array in the GitHub API response.
 
-**What is needed:** The `update_available` signal payload includes the GitHub release download URL for the current platform (Windows: `*_Setup.exe`, macOS: `*.dmg`, Linux: `*.AppImage`). The banner shows a "Download" button that opens the URL in the system browser.
+**What is needed:** In `updater.py`, parse the `assets` array of the API response and emit the download URL for the platform-specific binary (`*_Setup.exe` on Windows, `*.dmg` on macOS, `*.AppImage` on Linux) alongside `html_url`. The "Download" button in the banner opens the direct asset URL.
 
 ### No crash reporting (P2)
 Rotating log files capture exceptions but there is no mechanism for users to submit them. When something fails silently, there is no signal to the developer.
@@ -150,39 +151,38 @@ Rotating log files capture exceptions but there is no mechanism for users to sub
 | 1 | Code signing (Windows + macOS) | Security | P0 | Medium | ✅ | — |
 | 2 | Backup before destructive saves | Security / Prod | P0 | Small | ✅ | — |
 | 3 | Continuous scroll in viewer | UX | P0 | Large | ✅ | ✅ |
-| 4 | 22 untested tools | DX | P0 | Large | ✅ | — |
-| 5 | Interactive form fill + save | UX | P1 | Large | — | ✅ |
-| 6 | Thumbnail sidebar in viewer | UX | P1 | Medium | — | ✅ |
-| 7 | Expand batch tool to all operations | UX | P1 | Medium | — | ✅ |
-| 8 | File locking detection | Prod | P1 | Small | — | — |
-| 9 | Linting gate in CI | DX | P1 | Small | — | — |
-| 10 | Code coverage reporting | DX | P1 | Small | — | — |
-| 11 | `BaseTool` abstract class | Architecture | P1 | Medium | — | — |
-| 12 | Split `view_tool.py` into modules | Architecture | P1 | Large | — | — |
-| 13 | Security scanning in CI | Security | P1 | Small | — | — |
-| 14 | One-click updater download link | Prod | P2 | Small | — | ✅ |
+| 4 | 28+ untested tools | DX | P0 | Large | ✅ | — |
+| 5 | Form fill: radio write-back + in-place save | UX | P1 | Small | — | ✅ |
+| 6 | Expand batch tool to all operations | UX | P1 | Medium | — | ✅ |
+| 7 | File locking detection | Prod | P1 | Small | — | — |
+| 8 | Linting gate in CI | DX | P1 | Small | — | — |
+| 9 | Code coverage reporting | DX | P1 | Small | — | — |
+| 10 | `BaseTool` abstract class | Architecture | P1 | Medium | — | — |
+| 11 | `_PreviewCanvas` dedup (8 files) | Architecture | P1 | Medium | — | — |
+| 12 | Security scanning in CI | Security | P1 | Small | — | — |
+| 13 | Split `view_tool.py` into modules | Architecture | P1 | Large | — | — |
+| 14 | Direct binary download URL in updater | Prod | P2 | Small | — | ✅ |
 | 15 | Batch tool parallelization | Architecture | P2 | Small | — | ✅ |
 | 16 | Character-level text selection | UX | P2 | Large | — | ✅ |
 | 17 | Crash reporting (clipboard modal) | Prod | P2 | Small | — | — |
-| 18 | Deduplicate `_PreviewCanvas` | Architecture | P2 | Small | — | — |
-| 19 | `.env.example` | DX | P2 | Tiny | — | — |
+| 18 | `.env.example` | DX | P2 | Tiny | — | — |
 
 ### Recommended sequencing for v1.0
 
-**Sprint 1 — Trust (all P0, small/medium effort first):**
+**Sprint 1 — Trust (P0 small/medium items + P1 quick wins):**
 Backup utility → file locking detection → linting CI gate → coverage CI gate → security scanning CI gate → code signing setup
 
-**Sprint 2 — Viewer (the two large P0/P1 UX items):**
-Continuous scroll → thumbnail sidebar
+**Sprint 2 — Viewer (large P0 UX item):**
+Continuous scroll (note: expands `view_tool.py` further before the eventual module split)
 
 **Sprint 3 — Test coverage (P0 DX, large effort):**
-22 missing tool unit tests, in order of tool usage frequency
+28+ missing tool unit tests, in order of tool usage frequency
 
-**Sprint 4 — Differentiation (P1 UX):**
-Interactive form fill + save → expand batch tool → `BaseTool` base class
+**Sprint 4 — Differentiation (P1 UX + architecture):**
+Form fill radio write-back + in-place save → expand batch tool → `BaseTool` base class → `_PreviewCanvas` dedup
 
 **Sprint 5 — Polish (P2):**
-One-click updater link → batch parallelization → crash reporting → `_PreviewCanvas` dedup → `.env.example`
+Direct binary URL in updater → batch parallelization → crash reporting → `.env.example`
 
-**Deferred:**
-`view_tool.py` module split and character-level text selection — both are Large effort with no v1.0 blocker status. Schedule for post-launch.
+**Deferred (post-launch):**
+`view_tool.py` module split and character-level text selection — both are Large effort with no v1.0 blocker status. The module split cost compounds with every sprint that touches `view_tool.py` before it is done; schedule it as the first post-launch architectural task.
