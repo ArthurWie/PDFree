@@ -3072,7 +3072,7 @@ class ViewTool(QWidget):
                 continue
             frame, img_lbl = self._thumb_frames[i]
             page = self.doc[i]
-            dpr = self._thumb_list.devicePixelRatio()
+            dpr = self._thumb_scroll.devicePixelRatio()
             s = self.THUMB_W / page.rect.width
             pix = page.get_pixmap(matrix=fitz.Matrix(s * dpr, s * dpr), alpha=False)
             new_pm = _fitz_pix_to_qpixmap(pix, dpr)
