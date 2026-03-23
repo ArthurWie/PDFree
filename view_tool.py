@@ -3112,13 +3112,15 @@ class ViewTool(QWidget):
             except RuntimeError:
                 pass
         if 0 <= idx < len(self._thumb_frames):
-            frame, img_lbl = self._thumb_frames[idx]
-            img_lbl.setStyleSheet(
-                f"background: {WHITE}; border: 3px solid {BLUE}; border-radius: 2px;"
-            )
-            self._highlighted_thumb_frame = self._thumb_frames[idx]
-            self._highlighted_thumb_idx = idx
-            # Scroll to thumbnail
+            try:
+                frame, img_lbl = self._thumb_frames[idx]
+                img_lbl.setStyleSheet(
+                    f"background: {WHITE}; border: 3px solid {BLUE}; border-radius: 2px;"
+                )
+                self._highlighted_thumb_frame = self._thumb_frames[idx]
+                self._highlighted_thumb_idx = idx
+            except RuntimeError:
+                pass
             QTimer.singleShot(50, lambda: self._scroll_to_thumb(idx))
 
     def _scroll_to_thumb(self, idx: int):
