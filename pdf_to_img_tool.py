@@ -78,6 +78,7 @@ class _ExportImagesWorker(QThread):
 
     def run(self):
         try:
+            Path(self._out_dir).mkdir(parents=True, exist_ok=True)
             assert_file_writable(Path(self._out_dir) / "_probe")
             mat = fitz.Matrix(self._dpi / 72, self._dpi / 72)
             total = len(self._pages)

@@ -291,11 +291,13 @@ class _ExtractionWorker(QThread):
 
     def run(self):
         try:
+            Path(self._output_dir).mkdir(parents=True, exist_ok=True)
             assert_file_writable(Path(self._output_dir) / "_probe")
             self._do_extract()
         except PermissionError as exc:
             self.failed.emit(str(exc))
         except Exception as exc:
+            logger.exception("worker failed")
             self.failed.emit(str(exc))
 
     def _do_extract(self):

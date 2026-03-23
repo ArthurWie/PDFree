@@ -89,6 +89,7 @@ class _ReorderWorker(QThread):
         except PermissionError as exc:
             self.failed.emit(str(exc))
         except Exception as exc:
+            logger.exception("worker failed")
             self.failed.emit(str(exc))
 THUMB_H = 140
 GRID_COLS = 4

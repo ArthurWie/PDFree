@@ -124,6 +124,7 @@ class _ScalePagesWorker(QThread):
         except PermissionError as exc:
             self.failed.emit(str(exc))
         except Exception as exc:
+            logger.exception("worker failed")
             self.failed.emit(str(exc))
 
 PAGE_SIZES = {

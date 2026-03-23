@@ -58,8 +58,14 @@ EMERALD_DARK = "#059669"
 
 # UI chrome
 THUMB_BG = "#F0F2F5"
-SIDEBAR_BG = "#FAFBFC"
+SIDEBAR_BG = "#f0f4f8"
 SCROLLBAR_HANDLE = "#C4CCD8"
+
+# Home screen theme-aware tokens
+HOME_BORDER = "#e2e8f0"
+HOME_SEARCH_BG = "#f8fafc"
+HOME_SEARCH_TXT = "#6b7280"
+HOME_TEXT = "#1a202c"
 
 # Home screen widgets
 SOON_TXT = "#B0B8C4"

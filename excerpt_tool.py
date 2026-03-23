@@ -58,7 +58,7 @@ from colors import (
     SIDEBAR_BG,
     BLUE_MED,
 )
-from utils import _fitz_pix_to_qpixmap, _WheelToHScroll, assert_file_writable, backup_original
+from utils import _fitz_pix_to_qpixmap, _WheelToHScroll, assert_file_writable
 
 try:
     import fitz  # pymupdf
