@@ -32,6 +32,12 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - name: Security scan (bandit)
+        run: bandit -r . -ll --exclude ./.venv,./tests
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: pip-audit
+
       - name: Run tests
         run: pytest --tb=short -q --cov=. --cov-report=term-missing --cov-fail-under=18
 
