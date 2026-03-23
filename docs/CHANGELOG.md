@@ -4,6 +4,156 @@ All changes in reverse chronological order. Dates are YYYY-MM-DD.
 
 ---
 
+## [Unreleased]
+
+### Added
+- Multi-document tab support: open multiple PDFs simultaneously in the viewer; each tab maintains independent zoom, rotation, page position, and undo stack
+- Split view: side-by-side display of two independent panes; left pane from active tab, right pane is independent and opens same file at page 0
+- Clickable links: URI links open in system browser via `QDesktopServices`; GOTO links navigate within the document; hover shows PointingHandCursor
+- Reading position memory: last-viewed page persisted in `library.json` via `LibraryState.get_last_page()` / `set_last_page()`; restored on file reopen with clamping
+- Unsaved-changes dialogs: per-tab Save/Discard/Cancel on tab close; aggregate Save All/Discard All/Cancel on app quit
+- `_RenderPane` class: new per-document state container extracted from `ViewTool` (holds doc, page count, zoom, rotation, undo/redo, search state, form widgets)
+- `LibraryState.get_last_page()` / `set_last_page()`: retrieve and persist the last-viewed page number for any PDF path
+- `validate_signature_tool.py`: new tool — validates all embedded digital signatures in a PDF via pyhanko; reports trust status, document integrity, signer DN, signing time, and timestamp presence in scrollable result cards
+- `sign_tool.py`: optional TSA timestamping — "TIMESTAMP (OPTIONAL)" field in left panel; when non-empty, passes `HTTPTimeStamper` to `signers.sign_pdf()` for RFC 3161 timestamp embedding
+- `main.py`: wired `validate_signature` into IMPLEMENTED, CATEGORIES (Sign & Security), TOOL_DESCRIPTIONS, and `_open_tool` dispatch
+- `icons.py`: added `shield-check` icon (shield outline with inner check path)
+- `tests/test_validate_signature.py`: 5 tests covering empty-list for plain PDF, missing-file raises, required result keys, validation error caught, no-signatures mocked empty list
+- `sign_tool.py`: cryptographic PDF signing with PKCS#12 certificates via pyhanko; signature placement presets; background worker; page preview with signature box overlay
+- `pyhanko>=0.21` dependency added to requirements.txt
+- `view_tool.py`: search results panel — scrollable list below search bar showing every match with page number and text snippet; clicking a row jumps to that result; current match highlighted in blue; panel auto-shows/hides with search bar
+- `tests/test_integration.py`: 11 integration tests covering merge (page count, order, error path), split by ranges, compress lossless + lossy, and watermark stamp across all positions
+- `add_password_tool.py`: permission flag editing for already-encrypted PDFs — loads encrypted file by prompting for owner password, reads current permission flags into checkboxes, shows re-encrypt banner; saves with new passwords + updated permissions
+- `view_tool.py`: LRU thumbnail pixmap cache — replaces unbounded list with a 200-entry `OrderedDict`; evicts oldest entry (clears its label) when the limit is hit, keeping memory bounded for large documents
+- `PDFree-linux.spec`: PyInstaller onedir spec for Linux builds
+- `.github/workflows/release.yml`: Linux CI job — builds onedir bundle, assembles AppDir, produces `PDFree-x86_64.AppImage` via appimagetool; release job now uploads all three platform artifacts
+- `form_unlock_tool.py`: new tool — clears the ReadOnly bit on every AcroForm widget field; reports how many fields were unlocked
+- `main.py`: wired `html_to_pdf`, `office_to_pdf`, `pdf_to_csv`, `form_unlock` into IMPLEMENTED, CATEGORIES, TOOL_DESCRIPTIONS, and `_open_tool` dispatch
+- `tests/test_form_unlock.py`: 5 tests covering unlock success, valid output, no-field no-op, source unchanged, missing-file error
+- `tests/corpus/`: 6 committed PDF fixtures — plain, multipage, password-protected, form, annotated, corrupt
+- `tests/test_corpus.py`: 13 corpus smoke tests covering open, text, fields, annotations, auth, corrupt tolerance
+- `view_tool.py`: large-file warning — files >150 MB prompt the user before loading (P1.4)
+- `form_export_tool.py`: new tool — iterates all AcroForm widgets via `fitz.Page.widgets()`, displays field name/type/value in a sortable table, exports as JSON or CSV; background QThread worker for extraction
+- `main.py`: wired `form_export` into IMPLEMENTED, CATEGORIES (Sign & Security), TOOL_DESCRIPTIONS, and `_open_tool` dispatch
+- `tests/test_form_export.py`: 8 tests covering field count, names, values, page numbers, empty PDF, JSON roundtrip, CSV roundtrip, CSV header
+- `redact_tool.py`: text/regex auto-redaction — "FIND & REDACT TEXT" section in left panel with search entry, case-sensitive and regex toggles, and "Add All Matches" button; iterates all pages using `fitz.Page.search_for()` or regex extraction, appends matched rects to `_all_rects`, refreshes current page canvas and reports total match count
+- `tests/test_redact_text.py`: 5 tests covering plain search, redaction removes text, regex match extraction, case-insensitive search, no-match case
+
+### Changed
+- `PDFCanvas` now accepts `_RenderPane` instead of `ViewTool` directly; canvas stores `self._pane` for document state and `self._vt` for toolbar state
+- Undo/redo stack moved to per-pane ownership in `_RenderPane` (was global per-ViewTool)
+
+### Internal
+- Extracted `_RenderPane(QWidget)` as per-document state and UI container from `ViewTool`; moved page rendering, navigation, and undo/redo into this class
+
+---
+
+## 2026-03-19
+
+### feat: add two-up scroll mode tests
+
+- Two-up (facing pages) layout in ViewTool was already fully implemented (`_render_page_twoup`, `_set_mode_twoup`, `_set_mode_single`, paint event handling `_pixmap2`, navigation step of 2).
+- Added 11 tests in `tests/test_view_twoup.py`: ViewMode constants, navigation step logic, method signatures, mode toggle state, button checked state.
+
+---
+
+### feat: expose accessibility permission in Add Password
+
+- Added "Allow extraction for accessibility" checkbox to the PERMISSIONS section.
+- Maps to `fitz.PDF_PERM_ACCESSIBILITY` (PDF spec bit 10 — extract text/graphics for accessibility).
+- Checked by default (permissive). Uncheck to set `preventExtractForAccessibility`.
+- Affected: add_password_tool.py — `PERMISSIONS`, `_save()`.
+
+---
+
+### feat: search match count display
+
+- Search bar in ViewTool now shows "N of M" (e.g. "3 of 17") instead of "N/M".
+- Zero-results label changed from "0 results" to "No results".
+- Affected: view_tool.py — `_goto_search_result()`, `_do_search()`.
+
+---
+
+### feat: add fullscreen mode
+
+- F11 toggles fullscreen via `QMainWindow.showFullScreen()` / `showNormal()`.
+- `PDFreeApp._toggle_fullscreen()` checks `isFullScreen()` and switches accordingly.
+- `QShortcut(QKeySequence(Qt.Key.Key_F11))` wired in `__init__`.
+
+---
+
+### feat: add i18n scaffolding
+
+- `i18n.py` — `tr(text)` wrapper around `QCoreApplication.translate("PDFree", text)`; `QT_TRANSLATE_NOOP(context, text)` no-op marker for module-level strings.
+- `main.py` — all CATEGORIES titles and tool names, all TOOL_DESCRIPTIONS values, all TAB_CATEGORIES keys wrapped with `QT_TRANSLATE_NOOP`; `tr()` called at widget-creation sites (ToolCard name/description, RecentCard name/description, tab buttons, `_tool_display_name`, home screen labels).
+- `translations/pdffree_en.ts` — base English catalogue generated by `pyside6-lupdate main.py i18n.py`; 82 translatable strings extracted.
+- Pattern: add new translatable strings with `QT_TRANSLATE_NOOP("PDFree", "string")` at definition and `tr(var)` at widget-creation time; run `pyside6-lupdate` to update the catalogue.
+- 8 tests in `tests/test_i18n.py`.
+
+---
+
+### feat: add PDF/A export tool
+
+- `pdfa_tool.py` (`PDFATool`) — best-effort conversion to PDF/A-1b, -2b, or -3b.
+- Three version cards (PDF/A-1b / -2b / -3b); selected card highlighted.
+- Four sanitisation checkboxes: remove JavaScript, embedded files, hidden text, thumbnails — applied via `fitz.Document.scrub()`.
+- `convert_to_pdfa()` pure helper: scrubs, injects XMP `pdfaid:part` / `pdfaid:conformance` declaration via `fitz.Document.set_xml_metadata()`, saves with `garbage=4, deflate=True, encryption=NONE`.
+- Background `_PDFAWorker(QThread)` keeps UI responsive; emits `progress`, `finished`, `failed` signals.
+- Amber "best-effort" notice in right panel referencing VeraPDF for certified validation.
+- 8 tests in `tests/test_pdfa_tool.py`.
+- Wired into `IMPLEMENTED`, `CATEGORIES` (Advanced), and `TOOL_DESCRIPTIONS`.
+
+---
+
+### feat: add bookmark editor tool
+
+- `bookmarks_tool.py` (`BookmarksTool`) — view, add, remove, rename, and reorder PDF bookmarks.
+- Right panel: `QTreeWidget` showing the full TOC hierarchy. Selecting an entry populates the left panel editor (title, target page, nesting level 1–6).
+- Left panel: edit fields with "Apply Changes", plus Add / Remove / Move Up / Move Down actions.
+- Remove deletes the selected entry and all its children (entire subtree).
+- Move Up / Move Down reorder sibling entries while keeping children attached.
+- Pure helpers `toc_remove`, `toc_move_up`, `toc_move_down` operate on the flat `[[level, title, page]]` list; fully tested independently.
+- Reads existing TOC via `fitz.Document.get_toc()`; writes via `doc.set_toc()`.
+- 16 tests in `tests/test_bookmarks.py`.
+- Wired into `IMPLEMENTED`, `CATEGORIES` (View & Edit), and `TOOL_DESCRIPTIONS`.
+
+---
+
+### feat: add page labels tool
+
+- `page_labels_tool.py` (`PageLabelsTool`) — define custom page numbering ranges for any PDF.
+- Supports all 6 PDF label styles: Arabic (D), Roman lower (r), Roman upper (R), Alpha lower (a), Alpha upper (A), None.
+- Each range specifies: first page, style, optional prefix, and start number. Multiple ranges combine (e.g. Roman for pages 1–4, Arabic for pages 5+).
+- Right panel shows a live preview table (Physical Page → Label) that updates as ranges are edited.
+- Reads and populates existing label ranges from the loaded PDF via `fitz.Document.get_page_labels()`.
+- Saves via `fitz.Document.set_page_labels()` + `doc.save()`.
+- 14 tests in `tests/test_page_labels.py`.
+- Wired into `IMPLEMENTED`, `CATEGORIES` (View & Edit), and `TOOL_DESCRIPTIONS`.
+
+---
+
+### feat: add dark mode / theme toggle
+
+- `theme.py` — defines LIGHT and DARK colour palettes; `apply_theme(dark)` mutates `colors` module constants so all subsequently created widgets use the new palette; saves preference to `theme.json` in the log directory.
+- `colors.py` — added `HOME_BORDER`, `HOME_SEARCH_BG`, `HOME_SEARCH_TXT`, `HOME_TEXT` tokens; updated `SIDEBAR_BG` to match actual home-screen value.
+- `main.py` — `_build_home*` and related methods updated to use `colors.X` references instead of raw hex literals; moon/sun toggle button added to home header; `_toggle_theme()` applies theme and rebuilds home; startup applies saved preference via `apply_theme(is_dark())`.
+- Theme affects all newly created widgets; tools opened after a toggle use the new palette. Home screen rebuilds immediately on toggle.
+- 6 tests in `tests/test_theme.py`.
+
+---
+
+### feat: add batch processing tool
+
+- `batch_tool.py` (`BatchTool`) — apply one operation to multiple PDFs at once.
+- Operations: Compress (lossless/lossy presets), Rotate Pages, Add Page Numbers, Add Password, Remove Password.
+- File list with per-file status badges (Pending / Processing / Done / Error), drag-and-drop support, remove button.
+- `_BatchWorker(QThread)` processes files sequentially; emits `file_done` / `file_failed` / `all_done` signals.
+- Output folder configurable; defaults to the directory of the first input file.
+- Wired into `IMPLEMENTED`, `CATEGORIES` (Advanced), and `TOOL_DESCRIPTIONS` in `main.py`.
+- 13 tests in `tests/test_batch_tool.py`.
+
+---
+
 ## 2026-03-17
 
 ### feat: add 8 new tools — flatten, sanitize, extract images, scale pages, headers/footers, N-up layout, PDF to Excel, compare

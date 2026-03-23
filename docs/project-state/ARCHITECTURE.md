@@ -162,8 +162,36 @@ Rotation is expressed in degrees (0, 90, 180, 270) and passed as `rotate=` to `f
 
 ---
 
-## Annotation System (view_tool.py)
+## View Tool Architecture (view_tool.py)
 
+The viewer has been refactored into a multi-document architecture with the following components:
+
+### _RenderPane — Per-Document State Container
+`_RenderPane(QWidget)` is a new class that encapsulates all state and UI for a single open PDF:
+- **State**: document, path, page count, current page, zoom, rotation
+- **UI**: per-pane undo/redo stack (max 30), search state, form widgets, thumbnail state, link cache, render generation counter
+- **Public Interface**: properties `active_page`, `page_count`, `is_modified`, `can_undo`, `can_redo`, `path`; methods `undo()`, `redo()`, `cleanup()`, `load()`; signals `page_changed(int)`, `modified()`
+- **Lifecycle**: created by `ViewTool.open_file()`, cleaned up on tab close or app quit
+
+### ViewTool — Multi-Document Host
+Manages a `QTabWidget` containing one `_RenderPane` per open PDF:
+- **Tab bar**: shows document name (truncated to 20 chars), `•` prefix when modified, `+` button for new documents
+- **Tab shortcuts**: Ctrl+Tab (next), Ctrl+Shift+Tab (previous), Ctrl+W (close)
+- **Compatibility layer**: `active_pane` property returns the currently active `_RenderPane`; legacy properties (`doc`, `total_pages`, `current_page`, `zoom`, `_rotation`, etc.) delegate to `active_pane` for backward compatibility
+- **Split view**: optional `_splitter` holding left pane (from tab) and independent right pane
+
+### PDFCanvas Refactor
+Now takes a `_RenderPane` instead of `ViewTool` directly:
+- `self._pane` for document state (doc, page count, zoom, etc.)
+- `self._vt` for toolbar state (current annotation tool, stroke width, etc.)
+
+### Undo/redo model
+Each `_RenderPane` maintains its own undo stack (max 30 steps). Snapshots are taken before each annotation change and can be restored via `_pane.undo()` / `_pane.redo()`.
+
+### Form fields
+Detected via `fitz.Page.widgets()`. Qt widgets are overlaid at the correct PDF-coordinate positions using the page-to-widget coordinate transform. Changes are written back to the fitz widget on focus-out.
+
+### Annotation System
 The annotation system lives entirely in `view_tool.py` and is built on top of PyMuPDF's annotation API.
 
 ```
@@ -171,15 +199,9 @@ User mouse event
   └── PDFCanvas.mousePressEvent / mouseMoveEvent / mouseReleaseEvent
         └── ViewTool._on_mouse_down / _on_mouse_move / _on_mouse_up
               └── fitz.Page.add_*_annot(rect_or_points, ...)
-                    └── undo stack: copy of page annot state pushed to _undo_stack
-                          └── ViewTool._undo() / _redo() restores state
+                    └── undo stack: copy of page annot state pushed to _pane._undo_stack
+                          └── _pane.undo() / _pane.redo() restores state
 ```
-
-### Undo/redo model
-Undo captures a snapshot of the annotation list before each change. `MAX_UNDO = 30` steps are retained. The stack is per-document and is cleared when a different document is activated.
-
-### Form fields
-Detected via `fitz.Page.widgets()`. Qt widgets are overlaid at the correct PDF-coordinate positions using the page-to-widget coordinate transform. Changes are written back to the fitz widget on focus-out.
 
 ---
 

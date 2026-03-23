@@ -172,9 +172,29 @@ Writes the annotated PDF back to disk (in-place or Save As). Sets `_modified = F
 - **Dependencies**: `fitz.Document.save()`
 
 ### Multi-Document Tabs
-Load and switch between multiple open PDFs within the viewer. Each document maintains its own zoom, rotation, page position, and annotation undo stack.
-- **Module**: view_tool.py — `ViewTool._add_pdf()`, `_set_active_doc()`
-- **Dependencies**: Per-document state dict
+Open multiple PDFs in tabs; each tab shows a filename (truncated to 20 chars), with `•` prefix when modified. Tab bar includes a `+` button for quick adding. Keyboard shortcuts: Ctrl+Tab (next), Ctrl+Shift+Tab (previous), Ctrl+W (close). Duplicate files are detected and reused. Each pane maintains independent zoom, rotation, page position, and annotation undo stack (30 steps max).
+- **Module**: view_tool.py — `_RenderPane`, `ViewTool._tab_widget`, `ViewTool.open_file()`, `ViewTool._close_tab()`
+- **Dependencies**: `QTabWidget`, `_RenderPane` per-document state container
+
+### Split View
+Side-by-side display of two independent panes within a `QSplitter`. Left pane is the active tab; right pane is independent and opens the same file at page 0. Split mode toggled via `toggle_split()` / `close_split()`. Splitter is collapsible and resizable.
+- **Module**: view_tool.py — `ViewTool._split_left_pane`, `ViewTool._split_right_pane`, `ViewTool._splitter`, `ViewTool.toggle_split()`, `ViewTool.close_split()`
+- **Dependencies**: `QSplitter`, `_RenderPane` instances
+
+### Clickable Links
+URI links (`LINK_URI`) open in the system browser via `QDesktopServices.openUrl()`. GOTO links (`LINK_GOTO`) navigate to the target page within the current pane. Hover over any link shows a PointingHandCursor. Click vs. drag discrimination uses a 4 px threshold to avoid accidental navigation.
+- **Module**: view_tool.py — `PDFCanvas._update_link_cache()`, `PDFCanvas._fire_link()`, `PDFCanvas._link_at_pos()`
+- **Dependencies**: `fitz` link API, `QDesktopServices`
+
+### Reading Position Memory
+Last-viewed page number is persisted in `library.json` via `LibraryState.get_last_page()` / `set_last_page()`. Restored automatically on file reopen with out-of-range clamping (e.g., if the PDF was reduced to fewer pages). Signal `page_changed` is emitted on each navigation; listeners write state to persistence.
+- **Module**: view_tool.py — `_RenderPane.load()`, `_RenderPane.page_changed` signal; library_page.py — `LibraryState.get_last_page()`, `LibraryState.set_last_page()`
+- **Dependencies**: `LibraryState` for persistence
+
+### Unsaved-Changes Dialogs
+Per-tab Save / Discard / Cancel dialog on tab close (via `_close_tab()`). Aggregate Save All / Discard All / Cancel dialog on app quit (via `ViewTool.closeEvent()`). Dirty state tracked per-pane via `is_modified` property.
+- **Module**: view_tool.py — `ViewTool._close_tab()`, `ViewTool.closeEvent()`; main.py — `PDFreeApp.closeEvent()`
+- **Dependencies**: `QMessageBox`
 
 ---
 
@@ -395,6 +415,67 @@ Returns a styled `QPushButton` with an arrow-left icon, transparent background, 
 Event filter installed on `QScrollArea.viewport()`. Routes vertical mouse wheel events to the horizontal scrollbar, enabling natural horizontal scrolling of thumbnail strips with a standard scroll wheel.
 - **Module**: utils.py — `_WheelToHScroll`
 - **Dependencies**: PySide6 event system
+
+---
+
+## bookmarks_tool.py — Bookmark Editor
+
+### Bookmark Tree View
+Right panel displays the PDF's full table of contents as a `QTreeWidget` with hierarchical indentation (levels 1–6). Each entry shows title and target page. Selecting an entry populates the left-panel editor.
+- **Module**: bookmarks_tool.py — `BookmarksTool._refresh_tree()`, `_on_selection_changed()`
+- **Dependencies**: `fitz.Document.get_toc()`; `QTreeWidget`
+
+### Add / Remove / Rename Bookmarks
+Left panel editor: title field, page spin, level spin, Apply Changes button. Add inserts a new level-1 entry after the current selection. Remove deletes the entry and all its children (subtree). `toc_remove()` and `toc_move_up/down()` are pure functions on the flat TOC list.
+- **Module**: bookmarks_tool.py — `toc_remove()`, `toc_move_up()`, `toc_move_down()`; `BookmarksTool._add_bookmark()`, `_remove_bookmark()`, `_apply_edit()`
+- **Dependencies**: stdlib only for pure helpers
+
+### Reorder Bookmarks
+Up/Down buttons move the selected entry (and its children) one sibling position within the same nesting level. Cross-level moves are not permitted.
+- **Module**: bookmarks_tool.py — `BookmarksTool._move_up()`, `_move_down()`
+- **Dependencies**: `toc_move_up()`, `toc_move_down()`
+
+---
+
+## page_labels_tool.py — Page Labels
+
+### Custom Page Numbering Ranges
+Define one or more label ranges, each specifying: first page (1-based), numbering style (Arabic, Roman lower/upper, Alpha lower/upper, or None), optional prefix, and start number. The right panel shows a live preview table mapping physical pages to their computed labels. Existing PDF label ranges are read on load via `fitz.Document.get_page_labels()`.
+- **Module**: page_labels_tool.py — `PageLabelsTool`, `_RangeRow`, `compute_labels()`
+- **Dependencies**: `fitz.Document.get_page_labels()`, `fitz.Document.set_page_labels()`
+
+### Label Formats
+Six styles supported: `D` (1, 2, 3…), `r` (i, ii, iii…), `R` (I, II, III…), `a` (a, b, c…), `A` (A, B, C…), empty string (no label). Optional text prefix prepended to each label (e.g. "A-" → "A-1", "A-2"…).
+- **Module**: page_labels_tool.py — `_format_num()`, `_to_roman()`, `_to_alpha()`
+- **Dependencies**: stdlib only
+
+---
+
+## theme.py — Dark / Light Theme
+
+### Theme Toggle
+A moon/sun button in the home screen header switches between light and dark themes. `theme.apply_theme(dark)` mutates all relevant constants in `colors.py` so every subsequently created widget picks up the new palette. Preference is persisted as `theme.json` in the log directory and applied at startup.
+- **Module**: theme.py — `apply_theme()`, `is_dark()`; main.py — `PDFreeApp._toggle_theme()`
+- **Dependencies**: `colors.py`; `logging_config._log_dir()`
+
+---
+
+## batch_tool.py — Batch Processor
+
+### Multi-File Batch Operations
+Apply one operation to multiple PDF files at once. Supported operations: Compress (lossless/lossy presets), Rotate Pages (90° CW, 90° CCW, 180°), Add Page Numbers (position, format, start), Add Password (AES 256/128, RC4 128), Remove Password. Files are processed sequentially in a background `_BatchWorker(QThread)`.
+- **Module**: batch_tool.py — `BatchTool`, `_BatchWorker`, `_run_compress`, `_run_rotate`, `_run_add_page_numbers`, `_run_add_password`, `_run_remove_password`
+- **Dependencies**: `fitz`; `pypdf`; `PySide6.QThread`
+
+### File Queue with Status Tracking
+Right panel shows all queued PDFs with filename, page count, and a per-file status badge (Pending / Processing... / Done / Error). Files can be added via Browse or drag-and-drop and removed individually or all at once.
+- **Module**: batch_tool.py — `_FileRow`; `BatchTool._add_file()`, `_remove_file()`, `_clear_files()`
+- **Dependencies**: `fitz` (page count)
+
+### Configurable Output Folder
+Output folder selector; defaults to the directory of the first input file when left blank. Each processed file is saved as `<stem>_batch.pdf` in the output folder.
+- **Module**: batch_tool.py — `BatchTool._browse_out_dir()`, `_run_batch()`
+- **Dependencies**: `pathlib`
 
 ---
 
@@ -632,3 +713,89 @@ Position (6 options), format (1 / Page 1 / 1/N / Page 1 of N / - 1 -), font size
 Applies `fitz.Page.insert_textbox()` to every non-skipped page with the configured text and alignment, then saves with `garbage=3, deflate=True`.
 - **Module**: add_page_numbers_tool.py — `AddPageNumbersTool._save()`
 - **Dependencies**: `fitz`; `_number_rect()`
+
+---
+
+## pdfa_tool.py — PDF/A Export
+
+### Version Selection
+Three PDF/A version cards (PDF/A-1b, -2b, -3b) let the user choose the target archival standard. Selecting a card highlights it and sets `part` / `conformance` for the conversion. An amber "best-effort" notice references VeraPDF for certified validation.
+- **Module**: pdfa_tool.py — `PDFATool._build_left_panel()`; `_VERSIONS` catalogue
+- **Dependencies**: None beyond PySide6
+
+### Sanitisation Options
+Four checkboxes control what gets stripped before conversion: JavaScript, embedded/attached files, hidden text layers, and thumbnail images. Stripping is performed via `fitz.Document.scrub()`.
+- **Module**: pdfa_tool.py — `PDFATool._build_left_panel()`; `convert_to_pdfa()` — `remove_js`, `remove_embedded`, `remove_hidden_text`, `remove_thumbnails` parameters
+- **Dependencies**: `fitz.Document.scrub()`
+
+### XMP Conformance Declaration
+Injects an XMP metadata block with `pdfaid:part` and `pdfaid:conformance` identifiers (ISO 19005) into the output PDF via `fitz.Document.set_xml_metadata()`.
+- **Module**: pdfa_tool.py — `convert_to_pdfa()`; `_PDFA_XMP_TEMPLATE`
+- **Dependencies**: `fitz.Document.set_xml_metadata()`
+
+### Background Conversion Worker
+Conversion runs in `_PDFAWorker(QThread)` so the UI stays responsive. Emits `progress(int)`, `finished(str)`, and `failed(str)` signals. The UI shows a progress bar and a result card on completion.
+- **Module**: pdfa_tool.py — `_PDFAWorker`; `PDFATool._start_conversion()`, `_on_done()`, `_on_failed()`
+- **Dependencies**: `QThread`, `Signal`
+
+---
+
+## i18n.py — Internationalisation Scaffolding
+
+### Translation Helper
+`tr(text)` wraps `QCoreApplication.translate("PDFree", text)` for runtime string lookup. `QT_TRANSLATE_NOOP(context, text)` marks strings at module level without translating (no-op at runtime; recognised by `pyside6-lupdate`).
+- **Module**: i18n.py — `tr()`, `QT_TRANSLATE_NOOP()`
+- **Dependencies**: `PySide6.QtCore.QCoreApplication`
+
+### Translatable Catalogue in main.py
+All CATEGORIES titles and tool names, all TOOL_DESCRIPTIONS values, and all TAB_CATEGORIES keys are wrapped with `QT_TRANSLATE_NOOP`. `tr()` is called at widget-creation time in ToolCard, RecentCard, tab buttons, `_tool_display_name`, and key home-screen labels.
+- **Module**: main.py — `CATEGORIES`, `TOOL_DESCRIPTIONS`, `TAB_CATEGORIES`; `ToolCard.__init__()`, `RecentCard.__init__()`, `_build_tool_grid()`, `_tool_display_name()`
+- **Dependencies**: i18n.py
+
+### Base Translation File
+`translations/pdffree_en.ts` — Qt XML catalogue with 82 English source strings, generated by `pyside6-lupdate main.py i18n.py -ts translations/pdffree_en.ts`. To add a locale: copy to `translations/pdffree_<lang>.ts`, translate with Qt Linguist, compile with `pyside6-lrelease`, load via `QTranslator` at startup.
+- **Module**: translations/pdffree_en.ts
+- **Dependencies**: `pyside6-lupdate`, `pyside6-lrelease`
+
+---
+
+## sign_tool.py — Digital Signature
+
+### Cryptographic PDF Signing
+Sign a PDF with a PKCS#12 (.p12/.pfx) certificate. Adds a cryptographically valid digital signature field at a user-chosen position on any page. Supports optional reason, location, and contact info metadata. Signing runs in a background `_SignWorker(QThread)` so the UI stays responsive. Output saved as `<stem>_signed.pdf`.
+- **Module**: sign_tool.py — `SignTool`, `_SignWorker`
+- **Dependencies**: `pyhanko`; `fitz` (preview); `PySide6.QThread`
+
+### Signature Placement Presets
+Four one-click placement presets: Bottom Right, Bottom Left, Top Right, Top Left. Each computes a standard 240×70 pt signature box in PDF coordinates (bottom-left origin). The right-panel preview shows the exact placement as a dashed blue rectangle before signing.
+- **Module**: sign_tool.py — `_POSITIONS`; `_pdf_box_to_canvas()`; `_PreviewCanvas`
+- **Dependencies**: `fitz`
+
+### TSA Timestamping
+Optional RFC 3161 timestamp can be embedded in the signature by supplying a TSA URL in the left-panel "TIMESTAMP (OPTIONAL)" field. When non-empty, `HTTPTimeStamper` is constructed and passed to `signers.sign_pdf()`. Leave blank to sign without a timestamp.
+- **Module**: sign_tool.py — `_SignWorker.run()`
+- **Dependencies**: `pyhanko.sign.timestamps.HTTPTimeStamper`
+
+---
+
+## validate_signature_tool.py — Signature Validation
+
+### PDF Digital Signature Validation
+Validates all embedded digital signatures in a PDF. For each signature reports: field name, signer DN, trust status, document integrity (bottom_line), validation summary, signing time, and timestamp presence. Validation runs in `_ValidateWorker(QThread)`. Results shown as per-signature cards in a scrollable right panel with colored trust badge (emerald = trusted, red = not trusted).
+- **Module**: validate_signature_tool.py — `ValidateSignatureTool`, `_ValidateWorker`, `validate_signatures()`
+- **Dependencies**: `pyhanko.pdf_utils.reader.PdfFileReader`; `pyhanko.sign.validation.validate_pdf_signature`; `PySide6.QThread`
+
+
+---
+
+## redact_tool.py — Manual Redaction
+
+### Drag-to-Draw Bounding Box Redaction
+Draw black redaction boxes over any area of a page by clicking and dragging. Boxes are rendered in the canvas immediately. Double-clicking an existing box removes it. All rects are stored per-page in `_all_rects`. On save, each rect is applied via `page.add_redact_annot()` + `page.apply_redactions()` for permanent content-stream removal.
+- **Module**: redact_tool.py — `_RedactCanvas`, `RedactTool._save()`
+- **Dependencies**: `fitz`
+
+### Text / Regex Auto-Redaction
+Search for a plain-text string or regex pattern across all pages and automatically add bounding-box redactions for every match. Options: case-sensitive toggle, regex mode toggle. In plain-text mode uses `fitz.Page.search_for()`; in regex mode extracts page text, finds matches with `re`, then resolves bounding boxes via `search_for`. Results are merged into `_all_rects`; the current page canvas refreshes immediately.
+- **Module**: redact_tool.py — `RedactTool._find_and_add_matches()`
+- **Dependencies**: `fitz`; `re`
