@@ -1202,6 +1202,7 @@ class _ContinuousPane(QScrollArea):
     def current_page(self) -> int:
         vp_top = self.verticalScrollBar().value()
         for i, lbl in enumerate(self._labels):
+            # First label whose bottom is at or past the top of the viewport = topmost visible page
             if lbl.geometry().bottom() >= vp_top:
                 return i
         return 0
