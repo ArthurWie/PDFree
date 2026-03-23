@@ -1092,6 +1092,14 @@ class _RenderPane(QWidget):
         except Exception:
             pass
 
+    def _goto_page(self, target: int):
+        """Navigate to target page and emit page_changed signal."""
+        if not self._doc or target < 0 or target >= self._page_count:
+            return
+        self._current_page = target
+        self.page_changed.emit(target)
+        self._view_tool._show_page(target)
+
     def _fire_link(self, link: dict):
         import fitz as _fitz
         from PySide6.QtGui import QDesktopServices
@@ -1103,9 +1111,7 @@ class _RenderPane(QWidget):
         elif kind == _fitz.LINK_GOTO:
             target = link.get("page", 0)
             if 0 <= target < self._page_count:
-                self._view_tool._show_page(target)
-                self._current_page = target
-                self.page_changed.emit(target)
+                self._goto_page(target)
         else:
             logger.debug("unhandled link: %s", link)
 
