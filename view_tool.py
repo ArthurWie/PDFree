@@ -1151,6 +1151,114 @@ class _RenderPane(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Continuous-scroll pane
+# ---------------------------------------------------------------------------
+
+
+class _ContinuousPane(QScrollArea):
+    """Continuous-scroll multi-page PDF pane.
+
+    Opens its own fitz.Document. Renders pages lazily as the user scrolls.
+    """
+
+    page_changed = Signal(int)
+
+    def __init__(self, pdf_path: str, zoom: float = 1.0, parent=None):
+        super().__init__(parent)
+        self._path = pdf_path
+        self._zoom = zoom
+        self._doc = fitz.open(pdf_path)
+        self._labels: list[QLabel] = []
+        self._rendered: set[int] = set()
+
+        content = QWidget()
+        self._inner = QVBoxLayout(content)
+        self._inner.setSpacing(8)
+        self._inner.setContentsMargins(8, 8, 8, 8)
+
+        for i in range(self._doc.page_count):
+            lbl = QLabel()
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            page = self._doc.load_page(i)
+            w = int(page.rect.width * zoom)
+            h = int(page.rect.height * zoom)
+            lbl.setFixedSize(w, h)
+            self._labels.append(lbl)
+            self._inner.addWidget(lbl)
+
+        self.setWidget(content)
+        self.setWidgetResizable(False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.setStyleSheet(f"QScrollArea {{ background: {G50}; border: none; }}")
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        QTimer.singleShot(0, self._render_visible)
+
+    # --- Public interface ------------------------------------------------
+
+    def page_count(self) -> int:
+        return self._doc.page_count
+
+    def current_page(self) -> int:
+        vp_top = self.verticalScrollBar().value()
+        for i, lbl in enumerate(self._labels):
+            if lbl.geometry().bottom() >= vp_top:
+                return i
+        return 0
+
+    def zoom(self) -> float:
+        return self._zoom
+
+    def set_zoom(self, zoom: float) -> None:
+        self._zoom = zoom
+        self._rendered.clear()
+        for i, lbl in enumerate(self._labels):
+            page = self._doc.load_page(i)
+            lbl.setFixedSize(int(page.rect.width * zoom), int(page.rect.height * zoom))
+            lbl.clear()
+        self.widget().adjustSize()
+        QTimer.singleShot(0, self._render_visible)
+
+    def scroll_to_page(self, index: int) -> None:
+        if not (0 <= index < len(self._labels)):
+            return
+        QTimer.singleShot(0, lambda: self._do_scroll(index))
+
+    # --- Private ---------------------------------------------------------
+
+    def _do_scroll(self, index: int) -> None:
+        lbl = self._labels[index]
+        self.verticalScrollBar().setValue(lbl.geometry().top())
+
+    def _on_scroll(self) -> None:
+        self._render_visible()
+        self.page_changed.emit(self.current_page())
+
+    def _render_visible(self) -> None:
+        vp_top = self.verticalScrollBar().value()
+        vp_bottom = vp_top + self.viewport().height()
+        for i, lbl in enumerate(self._labels):
+            geo = lbl.geometry()
+            if geo.bottom() < vp_top or geo.top() > vp_bottom:
+                continue
+            if i in self._rendered:
+                continue
+            self._render_page(i)
+
+    def _render_page(self, index: int) -> None:
+        page = self._doc.load_page(index)
+        mat = fitz.Matrix(self._zoom, self._zoom)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        pm = _fitz_pix_to_qpixmap(pix)
+        self._labels[index].setPixmap(pm)
+        self._rendered.add(index)
+
+    def closeEvent(self, event):
+        self._doc.close()
+        super().closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
 # Main ViewTool widget
 # ---------------------------------------------------------------------------
 
