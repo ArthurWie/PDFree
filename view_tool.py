@@ -1077,9 +1077,16 @@ class _RenderPane(QWidget):
         self._doc = doc
         self._path = str(Path(path).resolve())
         self._page_count = doc.page_count
-        self._current_page = 0
         self._is_modified = False
-        self.page_changed.emit(0)
+
+        # Restore last page
+        from library_page import LibraryState
+
+        last = LibraryState().get_last_page(self._path)
+        if last >= self._page_count:
+            last = max(0, self._page_count - 1)
+        self._current_page = last
+        self.page_changed.emit(last)
 
     def _update_link_cache(self):
         self._link_cache = []
@@ -4337,6 +4344,12 @@ class ViewTool(QWidget):
         self._tab_widget.setCurrentIndex(idx)
         self._tab_widget.setTabToolTip(idx, path)
         pane.modified.connect(lambda p=pane: self._update_pane_tab_label(p))
+        # Connect page_changed to save last page position
+        from library_page import LibraryState
+
+        pane.page_changed.connect(
+            lambda page, p=pane: LibraryState().set_last_page(p.path, page)
+        )
         self._tab_widget.setVisible(True)
 
     def _make_tab_label(self, path: str, modified: bool) -> str:
