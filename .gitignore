@@ -30,6 +30,9 @@ logo_preview.png
 LOGO.png
 Untitled
 
+# Environment variables
+.env
+
 # Build / dist
 dist/
 build/
