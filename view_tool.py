@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QColorDialog,
     QTabWidget,
+    QMenu,
 )
 from PySide6.QtCore import (
     Qt,
@@ -1196,155 +1197,155 @@ class ViewTool(QWidget):
 
     @property
     def doc(self):
-        return self._pane._doc
+        return self.active_pane._doc
 
     @doc.setter
     def doc(self, v):
-        self._pane._doc = v
+        self.active_pane._doc = v
 
     @property
     def total_pages(self):
-        return self._pane._page_count
+        return self.active_pane._page_count
 
     @total_pages.setter
     def total_pages(self, v):
-        self._pane._page_count = v
+        self.active_pane._page_count = v
 
     @property
     def current_page(self):
-        return self._pane._current_page
+        return self.active_pane._current_page
 
     @current_page.setter
     def current_page(self, v):
-        self._pane._current_page = v
+        self.active_pane._current_page = v
 
     @property
     def zoom(self):
-        return self._pane._zoom
+        return self.active_pane._zoom
 
     @zoom.setter
     def zoom(self, v):
-        self._pane._zoom = v
+        self.active_pane._zoom = v
 
     @property
     def pdf_path(self):
-        return self._pane._path
+        return self.active_pane._path
 
     @pdf_path.setter
     def pdf_path(self, v):
-        self._pane._path = v
+        self.active_pane._path = v
 
     @property
     def _rotation(self):
-        return self._pane._rotation
+        return self.active_pane._rotation
 
     @_rotation.setter
     def _rotation(self, v):
-        self._pane._rotation = v
+        self.active_pane._rotation = v
 
     @property
     def _undo_stack(self):
-        return self._pane._undo_stack
+        return self.active_pane._undo_stack
 
     @_undo_stack.setter
     def _undo_stack(self, v):
-        self._pane._undo_stack = v
+        self.active_pane._undo_stack = v
 
     @property
     def _redo_stack(self):
-        return self._pane._redo_stack
+        return self.active_pane._redo_stack
 
     @_redo_stack.setter
     def _redo_stack(self, v):
-        self._pane._redo_stack = v
+        self.active_pane._redo_stack = v
 
     @property
     def _search_results(self):
-        return self._pane._search_results
+        return self.active_pane._search_results
 
     @_search_results.setter
     def _search_results(self, v):
-        self._pane._search_results = v
+        self.active_pane._search_results = v
 
     @property
     def _search_flat(self):
-        return self._pane._search_flat
+        return self.active_pane._search_flat
 
     @_search_flat.setter
     def _search_flat(self, v):
-        self._pane._search_flat = v
+        self.active_pane._search_flat = v
 
     @property
     def _search_idx(self):
-        return self._pane._search_idx
+        return self.active_pane._search_idx
 
     @_search_idx.setter
     def _search_idx(self, v):
-        self._pane._search_idx = v
+        self.active_pane._search_idx = v
 
     @property
     def _form_widgets(self):
-        return self._pane._form_widgets
+        return self.active_pane._form_widgets
 
     @_form_widgets.setter
     def _form_widgets(self, v):
-        self._pane._form_widgets = v
+        self.active_pane._form_widgets = v
 
     @property
     def _thumb_frames(self):
-        return self._pane._thumb_frames
+        return self.active_pane._thumb_frames
 
     @_thumb_frames.setter
     def _thumb_frames(self, v):
-        self._pane._thumb_frames = v
+        self.active_pane._thumb_frames = v
 
     @property
     def _thumb_cache(self):
-        return self._pane._thumb_cache
+        return self.active_pane._thumb_cache
 
     @_thumb_cache.setter
     def _thumb_cache(self, v):
-        self._pane._thumb_cache = v
+        self.active_pane._thumb_cache = v
 
     @property
     def _highlighted_thumb_idx(self):
-        return self._pane._highlighted_thumb_idx
+        return self.active_pane._highlighted_thumb_idx
 
     @_highlighted_thumb_idx.setter
     def _highlighted_thumb_idx(self, v):
-        self._pane._highlighted_thumb_idx = v
+        self.active_pane._highlighted_thumb_idx = v
 
     @property
     def _thumb_render_next(self):
-        return self._pane._thumb_render_next
+        return self.active_pane._thumb_render_next
 
     @_thumb_render_next.setter
     def _thumb_render_next(self, v):
-        self._pane._thumb_render_next = v
+        self.active_pane._thumb_render_next = v
 
     @property
     def _thumb_timer(self):
-        return self._pane._thumb_timer
+        return self.active_pane._thumb_timer
 
     @_thumb_timer.setter
     def _thumb_timer(self, v):
-        self._pane._thumb_timer = v
+        self.active_pane._thumb_timer = v
 
     @property
     def _render_gen(self):
-        return self._pane._render_gen
+        return self.active_pane._render_gen
 
     @_render_gen.setter
     def _render_gen(self, v):
-        self._pane._render_gen = v
+        self.active_pane._render_gen = v
 
     @property
     def canvas(self):
-        return self._pane._canvas
+        return self.active_pane._canvas
 
     @property
     def _canvas(self):
-        return self._pane._canvas
+        return self.active_pane._canvas
 
     def __init__(self, parent=None, initial_path: str = "", back_callback=None):
         super().__init__(parent)
@@ -1993,6 +1994,8 @@ class ViewTool(QWidget):
         self._tab_widget.tabCloseRequested.connect(self._close_tab)
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
         self._tab_widget.setVisible(False)
+        self._tab_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tab_widget.customContextMenuRequested.connect(self._show_tab_context_menu)
 
     # -- Reusable button factories ------------------------------------
 
@@ -2769,11 +2772,24 @@ class ViewTool(QWidget):
             ("Ctrl+-", self._zoom_out),
             ("Ctrl+0", self._zoom_fit),
             ("Ctrl+P", self._print_pdf),
-            ("Ctrl+W", self._close_tool),
+            ("Ctrl+W", self._on_ctrl_w),
         ]
         for key, slot in shortcuts:
             sc = QShortcut(QKeySequence(key), self)
             sc.activated.connect(slot)
+
+        next_tab_sc = QShortcut(QKeySequence("Ctrl+Tab"), self)
+        next_tab_sc.activated.connect(
+            lambda: self._tab_widget.setCurrentIndex(
+                (self._tab_widget.currentIndex() + 1) % max(self._tab_widget.count(), 1)
+            )
+        )
+        prev_tab_sc = QShortcut(QKeySequence("Ctrl+Shift+Tab"), self)
+        prev_tab_sc.activated.connect(
+            lambda: self._tab_widget.setCurrentIndex(
+                (self._tab_widget.currentIndex() - 1) % max(self._tab_widget.count(), 1)
+            )
+        )
 
     def _goto_page_dialog(self):
         if not self.doc:
@@ -2832,6 +2848,12 @@ class ViewTool(QWidget):
     def _close_tool(self):
         if self._back_callback:
             self._back_callback()
+
+    def _on_ctrl_w(self):
+        if self._tab_widget.count() > 0:
+            self._close_tab(self._tab_widget.currentIndex())
+        else:
+            self._close_tool()
 
     # ==================================================================
     # UNDO / REDO
@@ -4368,6 +4390,34 @@ class ViewTool(QWidget):
                 self._tab_widget.setTabText(i, label)
                 break
 
+    def _show_tab_context_menu(self, pos):
+        tab_bar = self._tab_widget.tabBar()
+        idx = tab_bar.tabAt(pos)
+        if idx < 0:
+            return
+        menu = QMenu(self)
+        split_action = menu.addAction("Open in Split View")
+        close_action = menu.addAction("Close")
+        close_others_action = menu.addAction("Close Others")
+        action = menu.exec(self._tab_widget.mapToGlobal(pos))
+        if action == split_action:
+            self._tab_widget.setCurrentIndex(idx)
+            if not self._split_mode:
+                self.toggle_split()
+            elif self._split_right_pane is not None:
+                pane = self._tab_widget.widget(idx)
+                if pane and pane.path:
+                    self._split_right_pane.cleanup()
+                    self._split_right_pane = _RenderPane(self)
+                    self._split_right_pane.load(pane.path)
+                    self._splitter.replaceWidget(1, self._split_right_pane)
+        elif action == close_action:
+            self._close_tab(idx)
+        elif action == close_others_action:
+            for i in range(self._tab_widget.count() - 1, -1, -1):
+                if i != idx:
+                    self._close_tab(i)
+
     def _close_tab(self, index: int):
         if not (0 <= index < self._tab_widget.count()):
             return
@@ -4403,7 +4453,7 @@ class ViewTool(QWidget):
             self._tab_widget.setVisible(False)
 
     def _on_tab_changed(self, index: int):
-        pass
+        self._update_zoom_label()
 
     # ==================================================================
     # SPLIT VIEW
@@ -4499,6 +4549,16 @@ class ViewTool(QWidget):
             for i in range(self._tab_widget.count())
             if self._tab_widget.widget(i).is_modified
         )
+        if (
+            getattr(self, "_split_left_pane", None)
+            and self._split_left_pane.is_modified
+        ):
+            modified_count += 1
+        if (
+            getattr(self, "_split_right_pane", None)
+            and self._split_right_pane.is_modified
+        ):
+            modified_count += 1
         if modified_count == 0:
             self.cleanup()
             event.accept()
