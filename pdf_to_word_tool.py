@@ -41,11 +41,13 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
     from pdf2docx import Converter as _PDF2DocxConverter
+
     _HAS_PDF2DOCX = True
 except ImportError:
     _HAS_PDF2DOCX = False
@@ -87,8 +89,8 @@ def _section(text):
 
 
 class _ConvertWorker(QThread):
-    finished = Signal(str)   # output path on success
-    failed = Signal(str)     # error message
+    finished = Signal(str)  # output path on success
+    failed = Signal(str)  # error message
 
     def __init__(self, pdf_path, out_path, start, end):
         super().__init__()
@@ -199,8 +201,7 @@ class PDFToWordTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -423,12 +424,20 @@ class PDFToWordTool(QWidget):
 
     def _parse_range(self):
         try:
-            start = int(self._from_entry.text().strip()) - 1 if self._from_entry.text().strip() else 0
+            start = (
+                int(self._from_entry.text().strip()) - 1
+                if self._from_entry.text().strip()
+                else 0
+            )
             start = max(0, start)
         except ValueError:
             start = 0
         try:
-            end = int(self._to_entry.text().strip()) if self._to_entry.text().strip() else None
+            end = (
+                int(self._to_entry.text().strip())
+                if self._to_entry.text().strip()
+                else None
+            )
         except ValueError:
             end = None
         return start, end
@@ -437,8 +446,9 @@ class PDFToWordTool(QWidget):
         if not self._pdf_path:
             return
         if not _HAS_PDF2DOCX:
-            QMessageBox.warning(self, "Missing dependency",
-                                "Install pdf2docx:\n  pip install pdf2docx")
+            QMessageBox.warning(
+                self, "Missing dependency", "Install pdf2docx:\n  pip install pdf2docx"
+            )
             return
 
         out_name = self._out_entry.text().strip() or f"{Path(self._pdf_path).stem}.docx"
@@ -447,7 +457,8 @@ class PDFToWordTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Word Document",
+            self,
+            "Save Word Document",
             str(Path(default_dir) / out_name),
             "Word Documents (*.docx)",
         )

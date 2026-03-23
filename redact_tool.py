@@ -47,7 +47,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -365,8 +366,7 @@ class RedactTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -742,9 +742,7 @@ class RedactTool(QWidget):
         self._save_btn.setEnabled(False)
         self._status_lbl.setText("Applying redactions...")
 
-        self._worker = _RedactWorker(
-            self._pdf_path, out_path, dict(self._all_rects)
-        )
+        self._worker = _RedactWorker(self._pdf_path, out_path, dict(self._all_rects))
         self._worker.finished.connect(self._on_save_done)
         self._worker.failed.connect(self._on_save_failed)
         self._worker.start()

@@ -44,7 +44,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -62,7 +63,9 @@ class _WatermarkWorker(QThread):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, pdf_path, out_path, text, fontsize, rgb, opacity, position, parent=None):
+    def __init__(
+        self, pdf_path, out_path, text, fontsize, rgb, opacity, position, parent=None
+    ):
         super().__init__(parent)
         self._pdf_path = pdf_path
         self._out_path = out_path
@@ -79,8 +82,12 @@ class _WatermarkWorker(QThread):
             doc = fitz.open(self._pdf_path)
             for page in doc:
                 _stamp_watermark(
-                    page, self._text, self._fontsize, self._rgb,
-                    self._opacity, self._position
+                    page,
+                    self._text,
+                    self._fontsize,
+                    self._rgb,
+                    self._opacity,
+                    self._position,
                 )
             doc.save(self._out_path, garbage=3, deflate=True)
             doc.close()
@@ -91,10 +98,11 @@ class _WatermarkWorker(QThread):
             logger.exception("worker failed")
             self.failed.emit(str(exc))
 
+
 COLOR_PRESETS = {
-    "Gray":  (0.50, 0.50, 0.50),
-    "Red":   (0.80, 0.10, 0.10),
-    "Blue":  (0.10, 0.30, 0.85),
+    "Gray": (0.50, 0.50, 0.50),
+    "Red": (0.80, 0.10, 0.10),
+    "Blue": (0.10, 0.30, 0.85),
     "Green": (0.10, 0.55, 0.20),
     "Black": (0.00, 0.00, 0.00),
 }
@@ -206,8 +214,11 @@ class _PreviewCanvas(QWidget):
 
         if self._pixmap is None or self._pixmap.isNull():
             p.setPen(QColor(G400))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Load a PDF to see\nthe watermark preview")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Load a PDF to see\nthe watermark preview",
+            )
             return
 
         pw, ph = self._pixmap.width(), self._pixmap.height()
@@ -221,8 +232,12 @@ class _PreviewCanvas(QWidget):
         p.setBrush(QColor(0, 0, 0, 28))
         p.drawRoundedRect(x + 4, y + 4, dw, dh, 4, 4)
 
-        scaled = self._pixmap.scaled(dw, dh, Qt.AspectRatioMode.KeepAspectRatio,
-                                     Qt.TransformationMode.SmoothTransformation)
+        scaled = self._pixmap.scaled(
+            dw,
+            dh,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         p.drawPixmap(x, y, scaled)
 
 
@@ -308,8 +323,7 @@ class WatermarkTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -553,7 +567,9 @@ class WatermarkTool(QWidget):
         position = self._pos_combo.currentText()
 
         tmp = fitz.open()
-        tmp.insert_pdf(self._doc, from_page=self._preview_page, to_page=self._preview_page)
+        tmp.insert_pdf(
+            self._doc, from_page=self._preview_page, to_page=self._preview_page
+        )
         page = tmp[0]
         try:
             _stamp_watermark(page, text, fontsize, rgb, opacity, position)
@@ -586,7 +602,8 @@ class WatermarkTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self,
+            "Save PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

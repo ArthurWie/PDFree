@@ -45,7 +45,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -113,34 +114,42 @@ def _text_input() -> QLineEdit:
 
 def _resolve(template: str, page_num: int, total: int, filename: str) -> str:
     return (
-        template
-        .replace("{page}", str(page_num))
+        template.replace("{page}", str(page_num))
         .replace("{total}", str(total))
         .replace("{date}", datetime.date.today().strftime("%Y-%m-%d"))
         .replace("{filename}", filename)
     )
 
 
-def _apply_zones(page, header_inputs: dict, footer_inputs: dict,
-                 page_num: int, total: int, filename: str,
-                 font_size: float, margin: int):
+def _apply_zones(
+    page,
+    header_inputs: dict,
+    footer_inputs: dict,
+    page_num: int,
+    total: int,
+    filename: str,
+    font_size: float,
+    margin: int,
+):
     w = page.rect.width
     h = page.rect.height
 
     header_zones = {
-        "left":   fitz.Rect(margin, margin, w / 3, margin + font_size + 4),
+        "left": fitz.Rect(margin, margin, w / 3, margin + font_size + 4),
         "center": fitz.Rect(w / 3, margin, 2 * w / 3, margin + font_size + 4),
-        "right":  fitz.Rect(2 * w / 3, margin, w - margin, margin + font_size + 4),
+        "right": fitz.Rect(2 * w / 3, margin, w - margin, margin + font_size + 4),
     }
     footer_zones = {
-        "left":   fitz.Rect(margin, h - margin - font_size - 4, w / 3, h - margin),
+        "left": fitz.Rect(margin, h - margin - font_size - 4, w / 3, h - margin),
         "center": fitz.Rect(w / 3, h - margin - font_size - 4, 2 * w / 3, h - margin),
-        "right":  fitz.Rect(2 * w / 3, h - margin - font_size - 4, w - margin, h - margin),
+        "right": fitz.Rect(
+            2 * w / 3, h - margin - font_size - 4, w - margin, h - margin
+        ),
     }
     align_map = {
-        "left":   fitz.TEXT_ALIGN_LEFT,
+        "left": fitz.TEXT_ALIGN_LEFT,
         "center": fitz.TEXT_ALIGN_CENTER,
-        "right":  fitz.TEXT_ALIGN_RIGHT,
+        "right": fitz.TEXT_ALIGN_RIGHT,
     }
 
     for zone_name, rect in {**header_zones, **footer_zones}.items():
@@ -204,7 +213,8 @@ class _PreviewCanvas(QWidget):
         p.drawRoundedRect(x + 4, y + 4, dw, dh, 4, 4)
 
         scaled = self._pixmap.scaled(
-            dw, dh,
+            dw,
+            dh,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
@@ -220,8 +230,18 @@ class _HeadersFootersWorker(QThread):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, pdf_path, out_path, total_pages, skip, font_size, margin,
-                 filename, header_inputs, footer_inputs):
+    def __init__(
+        self,
+        pdf_path,
+        out_path,
+        total_pages,
+        skip,
+        font_size,
+        margin,
+        filename,
+        header_inputs,
+        footer_inputs,
+    ):
         super().__init__()
         self._pdf_path = pdf_path
         self._out_path = out_path
@@ -244,9 +264,14 @@ class _HeadersFootersWorker(QThread):
                 page = doc[i]
                 page_num = i + 1
                 _apply_zones(
-                    page, self._header_inputs, self._footer_inputs,
-                    page_num, self._total_pages, self._filename,
-                    self._font_size, self._margin,
+                    page,
+                    self._header_inputs,
+                    self._footer_inputs,
+                    page_num,
+                    self._total_pages,
+                    self._filename,
+                    self._font_size,
+                    self._margin,
                 )
             doc.save(self._out_path, garbage=3, deflate=True)
             doc.close()
@@ -339,8 +364,7 @@ class HeadersFootersTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -609,14 +633,14 @@ class HeadersFootersTool(QWidget):
 
     def _gather_inputs(self) -> tuple[dict, dict]:
         header_inputs = {
-            "left":   self._header_left.text(),
+            "left": self._header_left.text(),
             "center": self._header_center.text(),
-            "right":  self._header_right.text(),
+            "right": self._header_right.text(),
         }
         footer_inputs = {
-            "left":   self._footer_left.text(),
+            "left": self._footer_left.text(),
             "center": self._footer_center.text(),
-            "right":  self._footer_right.text(),
+            "right": self._footer_right.text(),
         }
         return header_inputs, footer_inputs
 
@@ -639,8 +663,14 @@ class HeadersFootersTool(QWidget):
         if page_idx >= skip:
             page_num = page_idx + 1
             _apply_zones(
-                page, header_inputs, footer_inputs,
-                page_num, total, filename, font_size, margin,
+                page,
+                header_inputs,
+                footer_inputs,
+                page_num,
+                total,
+                filename,
+                font_size,
+                margin,
             )
 
         mat = fitz.Matrix(PREVIEW_SCALE, PREVIEW_SCALE)
@@ -665,7 +695,8 @@ class HeadersFootersTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self,
+            "Save PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )
@@ -683,8 +714,15 @@ class HeadersFootersTool(QWidget):
         self._status_lbl.setText("Saving...")
 
         self._worker = _HeadersFootersWorker(
-            self._pdf_path, out_path, total, skip, font_size, margin,
-            filename, header_inputs, footer_inputs,
+            self._pdf_path,
+            out_path,
+            total,
+            skip,
+            font_size,
+            margin,
+            filename,
+            header_inputs,
+            footer_inputs,
         )
         self._worker.finished.connect(self._on_save_done)
         self._worker.failed.connect(self._on_save_failed)

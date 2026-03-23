@@ -46,7 +46,8 @@ from colors import (
     G700,
     G900,
     WHITE,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap, svg_icon
 from utils import _fitz_pix_to_qpixmap
 
@@ -66,7 +67,7 @@ THUMB_W = 110
 
 
 class _RotateWorker(QThread):
-    finished = Signal(str, int)   # out_path, rotated_count
+    finished = Signal(str, int)  # out_path, rotated_count
     failed = Signal(str)
     progress = Signal(int)
 
@@ -99,6 +100,8 @@ class _RotateWorker(QThread):
         except Exception as exc:
             logger.exception("worker failed")
             self.failed.emit(str(exc))
+
+
 THUMB_H = 140
 GRID_COLS = 4
 THUMB_SCALE = 0.25
@@ -187,7 +190,8 @@ class _PageCell(QFrame):
 
         if self._pixmap and not self._pixmap.isNull():
             scaled = self._pixmap.scaled(
-                THUMB_W - 8, THUMB_H - 8,
+                THUMB_W - 8,
+                THUMB_H - 8,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -239,9 +243,7 @@ class RotateTool(QWidget):
         if fitz is None or PdfReader is None:
             lay = QVBoxLayout(self)
             lbl = QLabel(
-                "Missing dependencies.\n\n"
-                "Install with:\n"
-                "  pip install pymupdf pypdf"
+                "Missing dependencies.\n\nInstall with:\n  pip install pymupdf pypdf"
             )
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {G500}; font: 16px;")
@@ -332,8 +334,7 @@ class RotateTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
         dz_lay.setContentsMargins(10, 0, 10, 0)
@@ -558,9 +559,7 @@ class RotateTool(QWidget):
     # -----------------------------------------------------------------------
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(path)
 
@@ -674,9 +673,7 @@ class RotateTool(QWidget):
         if n == 0:
             self._sel_lbl.setText("No pages selected")
         else:
-            self._sel_lbl.setText(
-                f"{n} page{'s' if n != 1 else ''} selected"
-            )
+            self._sel_lbl.setText(f"{n} page{'s' if n != 1 else ''} selected")
 
     # -----------------------------------------------------------------------
     # Rotation

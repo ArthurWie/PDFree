@@ -68,7 +68,7 @@ THUMB_W = 110
 
 
 class _RemovePagesWorker(QThread):
-    finished = Signal(str, int, int)   # out_path, removed, kept
+    finished = Signal(str, int, int)  # out_path, removed, kept
     failed = Signal(str)
     progress = Signal(int)
 
@@ -98,6 +98,8 @@ class _RemovePagesWorker(QThread):
         except Exception as exc:
             logger.exception("worker failed")
             self.failed.emit(str(exc))
+
+
 THUMB_H = 140
 GRID_COLS = 4
 THUMB_SCALE = 0.25
@@ -167,7 +169,8 @@ class _PageCell(QFrame):
         # Thumbnail
         if self._pixmap and not self._pixmap.isNull():
             scaled = self._pixmap.scaled(
-                THUMB_W - 8, THUMB_H - 8,
+                THUMB_W - 8,
+                THUMB_H - 8,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -177,7 +180,10 @@ class _PageCell(QFrame):
         else:
             p.setPen(QColor(G400))
             p.drawText(
-                0, 0, THUMB_W, THUMB_H,
+                0,
+                0,
+                THUMB_W,
+                THUMB_H,
                 Qt.AlignmentFlag.AlignCenter,
                 "...",
             )
@@ -199,7 +205,10 @@ class _PageCell(QFrame):
         f.setPointSize(8)
         p.setFont(f)
         p.drawText(
-            0, THUMB_H, THUMB_W, 20,
+            0,
+            THUMB_H,
+            THUMB_W,
+            20,
             Qt.AlignmentFlag.AlignCenter,
             str(self.page_idx + 1),
         )
@@ -232,9 +241,7 @@ class RemoveTool(QWidget):
         if fitz is None or PdfReader is None:
             lay = QVBoxLayout(self)
             lbl = QLabel(
-                "Missing dependencies.\n\n"
-                "Install with:\n"
-                "  pip install pymupdf pypdf"
+                "Missing dependencies.\n\nInstall with:\n  pip install pymupdf pypdf"
             )
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {G500}; font: 16px;")
@@ -324,8 +331,7 @@ class RemoveTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
         dz_lay.setContentsMargins(10, 0, 10, 0)
@@ -496,9 +502,7 @@ class RemoveTool(QWidget):
     # -----------------------------------------------------------------------
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(path)
 
@@ -646,7 +650,9 @@ class RemoveTool(QWidget):
     def _remove_pages(self):
         remaining = self._total_pages - len(self._marked)
         if remaining <= 0:
-            QMessageBox.warning(self, "Cannot remove", "You must keep at least one page.")
+            QMessageBox.warning(
+                self, "Cannot remove", "You must keep at least one page."
+            )
             return
 
         out_name = self._out_entry.text().strip() or "output.pdf"

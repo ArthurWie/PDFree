@@ -43,7 +43,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -61,9 +62,9 @@ THUMB_SIZE = 96
 def _fmt_size(n: int) -> str:
     if n < 1024:
         return f"{n} B"
-    if n < 1024 ** 2:
+    if n < 1024**2:
         return f"{n / 1024:.1f} KB"
-    return f"{n / 1024 ** 2:.2f} MB"
+    return f"{n / 1024**2:.2f} MB"
 
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPushButton:
@@ -136,7 +137,9 @@ class _ExtractImagesWorker(QThread):
                 for i, (page_idx, xref, w, h) in enumerate(self._images):
                     img_data = doc.extract_image(xref)
                     raw = img_data["image"]
-                    out_file = out_dir / f"image_{i + 1:04d}_p{page_idx + 1}.{self._ext}"
+                    out_file = (
+                        out_dir / f"image_{i + 1:04d}_p{page_idx + 1}.{self._ext}"
+                    )
                     src_ext = img_data.get("ext", "")
                     if self._ext == src_ext or (
                         self._ext == "jpg" and src_ext in ("jpg", "jpeg")
@@ -239,8 +242,7 @@ class ExtractImagesTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
         dz_lay.setContentsMargins(10, 0, 10, 0)
@@ -364,9 +366,7 @@ class ExtractImagesTool(QWidget):
     # -----------------------------------------------------------------------
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(path)
 
@@ -506,7 +506,9 @@ class ExtractImagesTool(QWidget):
         if not self._pdf_path or not self._images:
             return
 
-        out_dir = Path(self._folder_entry.text().strip() or str(Path(self._pdf_path).parent))
+        out_dir = Path(
+            self._folder_entry.text().strip() or str(Path(self._pdf_path).parent)
+        )
         fmt = self._fmt_combo.currentText().lower()
         ext = "jpg" if fmt == "jpeg" else "png"
 

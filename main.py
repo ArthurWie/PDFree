@@ -213,7 +213,11 @@ CATEGORIES = [
         "tools": [
             ("img_to_pdf", QT_TRANSLATE_NOOP("PDFree", "Image to PDF"), "image"),
             ("html_to_pdf", QT_TRANSLATE_NOOP("PDFree", "HTML to PDF"), "file-output"),
-            ("office_to_pdf", QT_TRANSLATE_NOOP("PDFree", "Office to PDF"), "file-text"),
+            (
+                "office_to_pdf",
+                QT_TRANSLATE_NOOP("PDFree", "Office to PDF"),
+                "file-text",
+            ),
             ("svg_to_pdf", QT_TRANSLATE_NOOP("PDFree", "SVG to PDF"), "image"),
         ],
     },
@@ -246,7 +250,11 @@ CATEGORIES = [
                 "unlock",
             ),
             ("sanitize", QT_TRANSLATE_NOOP("PDFree", "Sanitize"), "eraser"),
-            ("form_unlock", QT_TRANSLATE_NOOP("PDFree", "Unlock Form Fields"), "unlock"),
+            (
+                "form_unlock",
+                QT_TRANSLATE_NOOP("PDFree", "Unlock Form Fields"),
+                "unlock",
+            ),
             ("form_export", QT_TRANSLATE_NOOP("PDFree", "Export Form Data"), "table"),
             (
                 "validate_signature",
@@ -343,7 +351,9 @@ TOOL_DESCRIPTIONS = {
     "sanitize": QT_TRANSLATE_NOOP(
         "PDFree", "Strip JavaScript, metadata, and hidden data."
     ),
-    "sign": QT_TRANSLATE_NOOP("PDFree", "Sign a PDF with a PKCS#12 digital certificate."),
+    "sign": QT_TRANSLATE_NOOP(
+        "PDFree", "Sign a PDF with a PKCS#12 digital certificate."
+    ),
     "add_image": QT_TRANSLATE_NOOP("PDFree", "Insert a PNG or JPEG image onto a page."),
     "add_page_numbers": QT_TRANSLATE_NOOP(
         "PDFree", "Stamp page numbers on every page."
@@ -545,7 +555,9 @@ class QuickStartZone(QWidget):
         lay.setContentsMargins(0, 16, 0, 10)
         lay.setSpacing(0)
 
-        icon = PDFIconWidget(38, 64, color=colors.BLUE_ACCENT, bg=colors.QS_BG, draw_arrow=True)
+        icon = PDFIconWidget(
+            38, 64, color=colors.BLUE_ACCENT, bg=colors.QS_BG, draw_arrow=True
+        )
         lay.addWidget(icon, 0, Qt.AlignmentFlag.AlignHCenter)
         lay.addSpacing(4)
 
@@ -966,6 +978,7 @@ class PDFreeApp(QMainWindow):
 
         try:
             from library_page import LibraryState
+
             LibraryState().track_tool(tool_id)
         except Exception:
             pass
@@ -1377,6 +1390,7 @@ class PDFreeApp(QMainWindow):
 
         try:
             from library_page import LibraryState
+
             top = LibraryState().top_tools(4)
         except Exception:
             top = ["view", "split", "merge", "excerpt"]
@@ -1384,7 +1398,9 @@ class PDFreeApp(QMainWindow):
         for tid in top:
             tname, ticon, color = self._tool_meta(tid)
             desc = tr(TOOL_DESCRIPTIONS.get(tid, ""))
-            old_lay.addWidget(self._make_quick_tool_card(tid, tname, ticon, color, desc), 1)
+            old_lay.addWidget(
+                self._make_quick_tool_card(tid, tname, ticon, color, desc), 1
+            )
 
     def _make_quick_tool_card(
         self, tid: str, name: str, icon: str, color: str, desc: str
@@ -1393,12 +1409,8 @@ class PDFreeApp(QMainWindow):
         card.setObjectName("QTCard")
         card.setMinimumHeight(157)
         card.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        card._style_normal = (
-            f"QFrame#QTCard {{ background: {colors.WHITE}; border: 1px solid {colors.HOME_BORDER}; border-radius: 8px; }}"
-        )
-        card._style_hovered = (
-            f"QFrame#QTCard {{ background: {colors.WHITE}; border: 1px solid {colors.G300}; border-radius: 8px; }}"
-        )
+        card._style_normal = f"QFrame#QTCard {{ background: {colors.WHITE}; border: 1px solid {colors.HOME_BORDER}; border-radius: 8px; }}"
+        card._style_hovered = f"QFrame#QTCard {{ background: {colors.WHITE}; border: 1px solid {colors.G300}; border-radius: 8px; }}"
         card.setStyleSheet(card._style_normal)
         card.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
@@ -1406,7 +1418,9 @@ class PDFreeApp(QMainWindow):
         c_lay.setContentsMargins(21, 21, 21, 21)
         c_lay.setSpacing(12)
 
-        c_lay.addWidget(RoundedIconWidget(icon, color, 46), 0, Qt.AlignmentFlag.AlignLeft)
+        c_lay.addWidget(
+            RoundedIconWidget(icon, color, 46), 0, Qt.AlignmentFlag.AlignLeft
+        )
 
         n_lbl = QLabel(tr(name))
         n_lbl.setStyleSheet(
@@ -1487,12 +1501,8 @@ class PDFreeApp(QMainWindow):
         card.setObjectName("FolderCard")
         card.setFixedHeight(125)
         card.setMinimumWidth(80)
-        style_normal = (
-            f"QFrame#FolderCard {{ background: {colors.WHITE}; border: 1px solid {colors.HOME_BORDER}; border-radius: 8px; }}"
-        )
-        style_hovered = (
-            f"QFrame#FolderCard {{ background: {colors.WHITE}; border: 1px solid {colors.G300}; border-radius: 8px; }}"
-        )
+        style_normal = f"QFrame#FolderCard {{ background: {colors.WHITE}; border: 1px solid {colors.HOME_BORDER}; border-radius: 8px; }}"
+        style_hovered = f"QFrame#FolderCard {{ background: {colors.WHITE}; border: 1px solid {colors.G300}; border-radius: 8px; }}"
         card.setStyleSheet(style_normal)
         card.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         card.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
@@ -1530,7 +1540,9 @@ class PDFreeApp(QMainWindow):
         tr_lay.addWidget(fi)
         tr_lay.addStretch()
         dots = QLabel("···")
-        dots.setStyleSheet(f"color: {colors.G400}; font: bold 14px; background: transparent;")
+        dots.setStyleSheet(
+            f"color: {colors.G400}; font: bold 14px; background: transparent;"
+        )
         tr_lay.addWidget(dots)
         c_lay.addWidget(top_row)
 
@@ -2065,7 +2077,9 @@ class PDFreeApp(QMainWindow):
         r.addSpacing(10)
 
         # ── Name ──────────────────────────────────────────────────────
-        name_color = colors.BLUE_DEEP if is_sel else (colors.G900 if exists else colors.G400)
+        name_color = (
+            colors.BLUE_DEEP if is_sel else (colors.G900 if exists else colors.G400)
+        )
         fn = QLabel(entry.get("name", "Unknown"))
         fn.setStyleSheet(
             f"color: {name_color}; font: 500 13px 'Segoe UI'; background: transparent;"
@@ -2289,7 +2303,9 @@ class PDFreeApp(QMainWindow):
             rw_lay.setSpacing(8)
             chev = QLabel(">")
             chev.setFixedWidth(8)
-            chev.setStyleSheet(f"color: {colors.G500}; font: 9px; background: transparent;")
+            chev.setStyleSheet(
+                f"color: {colors.G500}; font: 9px; background: transparent;"
+            )
             rw_lay.addWidget(chev)
             fi = QLabel("📁")
             fi.setFixedWidth(16)
@@ -2974,6 +2990,7 @@ class PDFreeApp(QMainWindow):
 # ---------------------------------------------------------------------------
 def _scrollbar_css() -> str:
     from colors import SCROLLBAR_HANDLE, G400
+
     return f"""
 QScrollBar:vertical {{
     background: transparent; width: 6px; margin: 0;

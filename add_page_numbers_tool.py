@@ -45,7 +45,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -145,8 +146,9 @@ def _format_number(fmt: str, page_num: int, total: int) -> str:
     return str(page_num)
 
 
-def _number_rect(position: str, page_w: float, page_h: float,
-                 fontsize: float, margin: float = 24) -> tuple[fitz.Rect, int]:
+def _number_rect(
+    position: str, page_w: float, page_h: float, fontsize: float, margin: float = 24
+) -> tuple[fitz.Rect, int]:
     """Return (textbox rect, fitz align constant) for the given position."""
     box_h = fontsize + 8
     box_w = 160
@@ -157,14 +159,18 @@ def _number_rect(position: str, page_w: float, page_h: float,
 
     if position == "Bottom Center":
         r = fitz.Rect(
-            page_w / 2 - box_w / 2, page_h - margin - box_h,
-            page_w / 2 + box_w / 2, page_h - margin,
+            page_w / 2 - box_w / 2,
+            page_h - margin - box_h,
+            page_w / 2 + box_w / 2,
+            page_h - margin,
         )
         return r, align_center
     if position == "Bottom Right":
         r = fitz.Rect(
-            page_w - margin - box_w, page_h - margin - box_h,
-            page_w - margin, page_h - margin,
+            page_w - margin - box_w,
+            page_h - margin - box_h,
+            page_w - margin,
+            page_h - margin,
         )
         return r, align_right
     if position == "Bottom Left":
@@ -172,8 +178,10 @@ def _number_rect(position: str, page_w: float, page_h: float,
         return r, align_left
     if position == "Top Center":
         r = fitz.Rect(
-            page_w / 2 - box_w / 2, margin,
-            page_w / 2 + box_w / 2, margin + box_h,
+            page_w / 2 - box_w / 2,
+            margin,
+            page_w / 2 + box_w / 2,
+            margin + box_h,
         )
         return r, align_center
     if position == "Top Right":
@@ -207,8 +215,11 @@ class _PreviewCanvas(QWidget):
 
         if self._pixmap is None or self._pixmap.isNull():
             p.setPen(QColor(G400))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Load a PDF to see\nthe page number preview")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Load a PDF to see\nthe page number preview",
+            )
             return
 
         pw, ph = self._pixmap.width(), self._pixmap.height()
@@ -222,8 +233,12 @@ class _PreviewCanvas(QWidget):
         p.setBrush(QColor(0, 0, 0, 28))
         p.drawRoundedRect(x + 4, y + 4, dw, dh, 4, 4)
 
-        scaled = self._pixmap.scaled(dw, dh, Qt.AspectRatioMode.KeepAspectRatio,
-                                     Qt.TransformationMode.SmoothTransformation)
+        scaled = self._pixmap.scaled(
+            dw,
+            dh,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         p.drawPixmap(x, y, scaled)
 
 
@@ -236,7 +251,9 @@ class _AddPageNumbersWorker(QThread):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, pdf_path, out_path, total_pages, skip, start, fmt, position, fontsize):
+    def __init__(
+        self, pdf_path, out_path, total_pages, skip, start, fmt, position, fontsize
+    ):
         super().__init__()
         self._pdf_path = pdf_path
         self._out_path = out_path
@@ -263,7 +280,11 @@ class _AddPageNumbersWorker(QThread):
                     self._position, page.rect.width, page.rect.height, self._fontsize
                 )
                 page.insert_textbox(
-                    rect, text, fontsize=self._fontsize, align=align, color=(0.2, 0.2, 0.2)
+                    rect,
+                    text,
+                    fontsize=self._fontsize,
+                    align=align,
+                    color=(0.2, 0.2, 0.2),
                 )
             doc.save(self._out_path, garbage=3, deflate=True)
             doc.close()
@@ -355,8 +376,7 @@ class AddPageNumbersTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -602,8 +622,12 @@ class AddPageNumbersTool(QWidget):
         if page_idx >= skip:
             page_num = start + (page_idx - skip)
             text = _format_number(fmt, page_num, total_numbered)
-            rect, align = _number_rect(position, page.rect.width, page.rect.height, fontsize)
-            page.insert_textbox(rect, text, fontsize=fontsize, align=align, color=(0.2, 0.2, 0.2))
+            rect, align = _number_rect(
+                position, page.rect.width, page.rect.height, fontsize
+            )
+            page.insert_textbox(
+                rect, text, fontsize=fontsize, align=align, color=(0.2, 0.2, 0.2)
+            )
 
         mat = fitz.Matrix(PREVIEW_SCALE, PREVIEW_SCALE)
         pix = page.get_pixmap(matrix=mat)
@@ -627,7 +651,8 @@ class AddPageNumbersTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self,
+            "Save PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )
@@ -643,8 +668,14 @@ class AddPageNumbersTool(QWidget):
         self._status_lbl.setText("Saving...")
 
         self._worker = _AddPageNumbersWorker(
-            self._pdf_path, out_path, self._total_pages,
-            skip, start, fmt, position, fontsize,
+            self._pdf_path,
+            out_path,
+            self._total_pages,
+            skip,
+            start,
+            fmt,
+            position,
+            fontsize,
         )
         self._worker.finished.connect(self._on_save_done)
         self._worker.failed.connect(self._on_save_failed)

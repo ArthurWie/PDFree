@@ -39,7 +39,8 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap, svg_icon
 
 try:

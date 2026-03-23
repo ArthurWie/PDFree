@@ -45,11 +45,13 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
     from weasyprint import HTML as _WeasyHTML
+
     _HAS_WEASYPRINT = True
 except ImportError:
     _HAS_WEASYPRINT = False
@@ -104,7 +106,7 @@ class _ConvertWorker(QThread):
 
     def __init__(self, mode, source, out_path):
         super().__init__()
-        self._mode = mode      # "file", "url", "paste"
+        self._mode = mode  # "file", "url", "paste"
         self._source = source
         self._out_path = out_path
 
@@ -241,8 +243,7 @@ class HTMLToPDFTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -443,8 +444,7 @@ class HTMLToPDFTool(QWidget):
 
     def _browse_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open HTML File", "",
-            "HTML Files (*.html *.htm);;All Files (*)"
+            self, "Open HTML File", "", "HTML Files (*.html *.htm);;All Files (*)"
         )
         if path:
             self._file_lbl.setText(Path(path).name)
@@ -458,8 +458,11 @@ class HTMLToPDFTool(QWidget):
 
     def _start_convert(self):
         if not _HAS_WEASYPRINT:
-            QMessageBox.warning(self, "Missing dependency",
-                                "Install weasyprint:\n  pip install weasyprint")
+            QMessageBox.warning(
+                self,
+                "Missing dependency",
+                "Install weasyprint:\n  pip install weasyprint",
+            )
             return
 
         mode_idx = self._input_stack.currentIndex()

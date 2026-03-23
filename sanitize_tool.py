@@ -41,7 +41,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -116,9 +117,9 @@ class _SanitizeWorker(QThread):
 def _fmt_size(n: int) -> str:
     if n < 1024:
         return f"{n} B"
-    if n < 1024 ** 2:
+    if n < 1024**2:
         return f"{n / 1024:.1f} KB"
-    return f"{n / 1024 ** 2:.2f} MB"
+    return f"{n / 1024**2:.2f} MB"
 
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPushButton:
@@ -219,8 +220,7 @@ class SanitizeTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
         dz_lay.setContentsMargins(10, 0, 10, 0)
@@ -399,9 +399,7 @@ class SanitizeTool(QWidget):
         return right
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(path)
 
@@ -524,7 +522,8 @@ class SanitizeTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Sanitized PDF",
+            self,
+            "Save Sanitized PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

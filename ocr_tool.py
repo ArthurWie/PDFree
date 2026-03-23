@@ -43,7 +43,8 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -259,8 +260,7 @@ class OCRTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)

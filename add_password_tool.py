@@ -42,7 +42,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -513,8 +514,7 @@ class AddPasswordTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(56)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         h = QHBoxLayout(dz)
         h.setContentsMargins(10, 0, 10, 0)

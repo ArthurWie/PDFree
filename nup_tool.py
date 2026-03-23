@@ -50,7 +50,8 @@ from colors import (
     WHITE,
     TEAL,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -89,9 +90,9 @@ LAYOUTS = [
 ]
 
 OUTPUT_SIZES = {
-    "A4 Portrait":      (595.28, 841.89),
-    "A4 Landscape":     (841.89, 595.28),
-    "Letter Portrait":  (612.0, 792.0),
+    "A4 Portrait": (595.28, 841.89),
+    "A4 Landscape": (841.89, 595.28),
+    "Letter Portrait": (612.0, 792.0),
     "Letter Landscape": (792.0, 612.0),
 }
 
@@ -142,9 +143,9 @@ def _combo(options: list) -> QComboBox:
 def _fmt_size(n: int) -> str:
     if n < 1024:
         return f"{n} B"
-    if n < 1024 ** 2:
+    if n < 1024**2:
         return f"{n / 1024:.1f} KB"
-    return f"{n / 1024 ** 2:.2f} MB"
+    return f"{n / 1024**2:.2f} MB"
 
 
 # ===========================================================================
@@ -280,10 +281,14 @@ class _NUpWorker(QThread):
         try:
             for i in range(0, total, 2):
                 sheet = out.new_page(width=self._out_w, height=self._out_h)
-                sheet.show_pdf_page(fitz.Rect(0, 0, self._out_w / 2, self._out_h), src, i)
+                sheet.show_pdf_page(
+                    fitz.Rect(0, 0, self._out_w / 2, self._out_h), src, i
+                )
                 if i + 1 < total:
                     sheet.show_pdf_page(
-                        fitz.Rect(self._out_w / 2, 0, self._out_w, self._out_h), src, i + 1
+                        fitz.Rect(self._out_w / 2, 0, self._out_w, self._out_h),
+                        src,
+                        i + 1,
                     )
             out.save(self._out_path, garbage=3, deflate=True)
         finally:
@@ -301,7 +306,9 @@ class _NUpWorker(QThread):
                     fitz.Rect(0, 0, self._out_w / 2, self._out_h / 2),
                     fitz.Rect(self._out_w / 2, 0, self._out_w, self._out_h / 2),
                     fitz.Rect(0, self._out_h / 2, self._out_w / 2, self._out_h),
-                    fitz.Rect(self._out_w / 2, self._out_h / 2, self._out_w, self._out_h),
+                    fitz.Rect(
+                        self._out_w / 2, self._out_h / 2, self._out_w, self._out_h
+                    ),
                 ]
                 for j, rect in enumerate(positions):
                     if i + j < total:
@@ -334,7 +341,8 @@ class _NUpWorker(QThread):
                 if front_pg < total:
                     sheet.show_pdf_page(
                         fitz.Rect(self._out_w / 2, 0, self._out_w, self._out_h),
-                        src, front_pg,
+                        src,
+                        front_pg,
                     )
             out.save(self._out_path, garbage=3, deflate=True)
         finally:
@@ -421,8 +429,7 @@ class NUpTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
         dz_lay.setContentsMargins(10, 0, 10, 0)
@@ -557,9 +564,7 @@ class NUpTool(QWidget):
     # -----------------------------------------------------------------------
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(path)
 
@@ -624,7 +629,9 @@ class NUpTool(QWidget):
         self._add_info_row(card_lay, "Pages", str(page_count))
 
         sheets = self._sheet_count(page_count, self._layout_id)
-        self._add_info_row(card_lay, "Sheets", f"{sheets} output sheet{'s' if sheets != 1 else ''}")
+        self._add_info_row(
+            card_lay, "Sheets", f"{sheets} output sheet{'s' if sheets != 1 else ''}"
+        )
 
         self._info_lay.addWidget(card)
         self._info_lay.addStretch()
@@ -668,7 +675,8 @@ class NUpTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self,
+            "Save PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

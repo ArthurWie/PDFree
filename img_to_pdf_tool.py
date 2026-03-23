@@ -48,7 +48,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -61,18 +62,18 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}
 
 PAGE_SIZES = {
-    "A4 Portrait":        (595, 842),
-    "A4 Landscape":       (842, 595),
-    "Letter Portrait":    (612, 792),
-    "Letter Landscape":   (792, 612),
-    "Fit to Image":       None,
+    "A4 Portrait": (595, 842),
+    "A4 Landscape": (842, 595),
+    "Letter Portrait": (612, 792),
+    "Letter Landscape": (792, 612),
+    "Fit to Image": None,
 }
 
 MARGINS = {
-    "None":   0,
-    "Small":  18,
+    "None": 0,
+    "Small": 18,
     "Medium": 36,
-    "Large":  72,
+    "Large": 72,
 }
 
 THUMB_W = 64
@@ -147,8 +148,12 @@ class _ImgRow(QFrame):
         thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         thumb_lbl.setStyleSheet("border: none; background: transparent;")
         if thumb and not thumb.isNull():
-            scaled = thumb.scaled(36, 44, Qt.AspectRatioMode.KeepAspectRatio,
-                                  Qt.TransformationMode.SmoothTransformation)
+            scaled = thumb.scaled(
+                36,
+                44,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
             thumb_lbl.setPixmap(scaled)
         else:
             thumb_lbl.setPixmap(svg_pixmap("image", G400, 22))
@@ -240,9 +245,9 @@ class _PreviewCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pixmap: QPixmap | None = None
-        self._page_w: float = 595   # A4 portrait default (points)
+        self._page_w: float = 595  # A4 portrait default (points)
         self._page_h: float = 842
-        self._margin: int = 18      # Small default
+        self._margin: int = 18  # Small default
         self.setMinimumSize(300, 300)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
@@ -266,8 +271,11 @@ class _PreviewCanvas(QWidget):
 
         if self._pixmap is None or self._pixmap.isNull():
             p.setPen(QColor(G400))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Add images to see\na preview here")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Add images to see\na preview here",
+            )
             return
 
         cw, ch = self.width(), self.height()
@@ -309,7 +317,8 @@ class _PreviewCanvas(QWidget):
             dx = ix + (iw - dw) // 2
             dy = iy + (ih - dh) // 2
             scaled = self._pixmap.scaled(
-                dw, dh,
+                dw,
+                dh,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -374,7 +383,7 @@ class ImgToPDFTool(QWidget):
             lay.addWidget(lbl)
             return
 
-        self._entries: list[dict] = []   # {path, thumb}
+        self._entries: list[dict] = []  # {path, thumb}
         self._rows: list[_ImgRow] = []
         self._selected_idx: int = -1
         self._worker = None
@@ -444,8 +453,7 @@ class ImgToPDFTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -566,7 +574,9 @@ class ImgToPDFTool(QWidget):
 
     def _browse_images(self):
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Add Images", "",
+            self,
+            "Add Images",
+            "",
             "Images (*.jpg *.jpeg *.png *.bmp *.gif *.tiff *.tif *.webp)",
         )
         for p in paths:
@@ -582,8 +592,12 @@ class ImgToPDFTool(QWidget):
         if pm.isNull():
             return
 
-        thumb = pm.scaled(THUMB_W, THUMB_H, Qt.AspectRatioMode.KeepAspectRatio,
-                          Qt.TransformationMode.SmoothTransformation)
+        thumb = pm.scaled(
+            THUMB_W,
+            THUMB_H,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         self._entries.append({"path": path, "thumb": thumb, "pixmap": pm})
         self._rebuild_list()
 
@@ -621,7 +635,10 @@ class ImgToPDFTool(QWidget):
     def _move_up(self, idx: int):
         if idx <= 0:
             return
-        self._entries[idx], self._entries[idx - 1] = self._entries[idx - 1], self._entries[idx]
+        self._entries[idx], self._entries[idx - 1] = (
+            self._entries[idx - 1],
+            self._entries[idx],
+        )
         if self._selected_idx == idx:
             self._selected_idx = idx - 1
         elif self._selected_idx == idx - 1:
@@ -631,7 +648,10 @@ class ImgToPDFTool(QWidget):
     def _move_down(self, idx: int):
         if idx >= len(self._entries) - 1:
             return
-        self._entries[idx], self._entries[idx + 1] = self._entries[idx + 1], self._entries[idx]
+        self._entries[idx], self._entries[idx + 1] = (
+            self._entries[idx + 1],
+            self._entries[idx],
+        )
         if self._selected_idx == idx:
             self._selected_idx = idx + 1
         elif self._selected_idx == idx + 1:

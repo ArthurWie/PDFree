@@ -46,7 +46,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -91,6 +92,8 @@ class _ReorderWorker(QThread):
         except Exception as exc:
             logger.exception("worker failed")
             self.failed.emit(str(exc))
+
+
 THUMB_H = 140
 GRID_COLS = 4
 THUMB_SCALE = 0.25
@@ -162,7 +165,8 @@ class _PageCell(QFrame):
 
         if self._pixmap and not self._pixmap.isNull():
             scaled = self._pixmap.scaled(
-                THUMB_W - 8, THUMB_H - 8,
+                THUMB_W - 8,
+                THUMB_H - 8,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -177,8 +181,14 @@ class _PageCell(QFrame):
         f = QFont()
         f.setPointSize(8)
         p.setFont(f)
-        p.drawText(0, THUMB_H, THUMB_W, 22, Qt.AlignmentFlag.AlignCenter,
-                   str(self._position + 1))
+        p.drawText(
+            0,
+            THUMB_H,
+            THUMB_W,
+            22,
+            Qt.AlignmentFlag.AlignCenter,
+            str(self._position + 1),
+        )
 
     # -----------------------------------------------------------------------
     # Drag
@@ -191,8 +201,14 @@ class _PageCell(QFrame):
             mime.setText(str(self._position))
             drag.setMimeData(mime)
             grab = self.grab()
-            drag.setPixmap(grab.scaled(88, 110, Qt.AspectRatioMode.KeepAspectRatio,
-                                       Qt.TransformationMode.SmoothTransformation))
+            drag.setPixmap(
+                grab.scaled(
+                    88,
+                    110,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
             drag.setHotSpot(QPoint(44, 55))
             drag.exec(Qt.DropAction.MoveAction)
 
@@ -237,7 +253,9 @@ class ReorderTool(QWidget):
 
         if fitz is None or PdfReader is None:
             lay = QVBoxLayout(self)
-            lbl = QLabel("Missing dependencies.\n\nInstall:\n  pip install pymupdf pypdf")
+            lbl = QLabel(
+                "Missing dependencies.\n\nInstall:\n  pip install pymupdf pypdf"
+            )
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {G500}; font: 16px;")
             lay.addWidget(lbl)
@@ -310,8 +328,7 @@ class ReorderTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -340,7 +357,9 @@ class ReorderTool(QWidget):
         lay.addSpacing(24)
 
         # Hint
-        hint = QLabel("Drag pages to reorder them.\nUse the buttons below for precise control.")
+        hint = QLabel(
+            "Drag pages to reorder them.\nUse the buttons below for precise control."
+        )
         hint.setWordWrap(True)
         hint.setStyleSheet(
             f"color: {G500}; font: 12px; background: transparent; border: none;"
@@ -619,8 +638,12 @@ class ReorderTool(QWidget):
         has_sel = 0 <= self._selected_pos < self._total_pages
         self._first_btn.setEnabled(has_sel and self._selected_pos > 0)
         self._up_btn.setEnabled(has_sel and self._selected_pos > 0)
-        self._down_btn.setEnabled(has_sel and self._selected_pos < self._total_pages - 1)
-        self._last_btn.setEnabled(has_sel and self._selected_pos < self._total_pages - 1)
+        self._down_btn.setEnabled(
+            has_sel and self._selected_pos < self._total_pages - 1
+        )
+        self._last_btn.setEnabled(
+            has_sel and self._selected_pos < self._total_pages - 1
+        )
 
     # -----------------------------------------------------------------------
     # Save
@@ -633,7 +656,8 @@ class ReorderTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self,
+            "Save PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

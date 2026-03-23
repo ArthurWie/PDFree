@@ -45,21 +45,22 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXT = {
     ".docx": "Word",
-    ".doc":  "Word",
+    ".doc": "Word",
     ".pptx": "PowerPoint",
-    ".ppt":  "PowerPoint",
+    ".ppt": "PowerPoint",
     ".xlsx": "Excel",
-    ".xls":  "Excel",
-    ".odt":  "OpenDocument",
-    ".odp":  "OpenDocument",
-    ".ods":  "OpenDocument",
+    ".xls": "Excel",
+    ".odt": "OpenDocument",
+    ".odp": "OpenDocument",
+    ".ods": "OpenDocument",
 }
 
 
@@ -130,8 +131,10 @@ class _ConvertWorker(QThread):
                     [
                         self._soffice,
                         "--headless",
-                        "--convert-to", "pdf",
-                        "--outdir", tmp_dir,
+                        "--convert-to",
+                        "pdf",
+                        "--outdir",
+                        tmp_dir,
                         self._input_file,
                     ],
                     capture_output=True,
@@ -248,9 +251,7 @@ class OfficeToPDFTool(QWidget):
                 "color: #92400E; font: bold 13px; background: transparent; border: none;"
             )
             bl.addWidget(bt)
-            bs = QLabel(
-                "Download and install LibreOffice from libreoffice.org"
-            )
+            bs = QLabel("Download and install LibreOffice from libreoffice.org")
             bs.setWordWrap(True)
             bs.setStyleSheet(
                 "color: #78350F; font: 12px; background: transparent; border: none;"
@@ -265,8 +266,7 @@ class OfficeToPDFTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -377,10 +377,10 @@ class OfficeToPDFTool(QWidget):
         ic.addSpacing(12)
 
         formats = [
-            ("Word",        ".docx  .doc"),
-            ("PowerPoint",  ".pptx  .ppt"),
-            ("Excel",       ".xlsx  .xls"),
-            ("OpenDocument",".odt  .odp  .ods"),
+            ("Word", ".docx  .doc"),
+            ("PowerPoint", ".pptx  .ppt"),
+            ("Excel", ".xlsx  .xls"),
+            ("OpenDocument", ".odt  .odp  .ods"),
         ]
         for name, exts in formats:
             row = QHBoxLayout()
@@ -446,8 +446,9 @@ class OfficeToPDFTool(QWidget):
     def _load_file(self, path):
         ext = Path(path).suffix.lower()
         if ext not in SUPPORTED_EXT:
-            QMessageBox.warning(self, "Unsupported",
-                                f"File type '{ext}' is not supported.")
+            QMessageBox.warning(
+                self, "Unsupported", f"File type '{ext}' is not supported."
+            )
             return
         self._input_path = path
         self._file_lbl.setText(Path(path).name)
@@ -463,18 +464,22 @@ class OfficeToPDFTool(QWidget):
         soffice = _find_soffice()
         if not soffice:
             QMessageBox.warning(
-                self, "LibreOffice not found",
-                "Install LibreOffice from libreoffice.org and try again."
+                self,
+                "LibreOffice not found",
+                "Install LibreOffice from libreoffice.org and try again.",
             )
             return
 
-        out_name = self._out_entry.text().strip() or f"{Path(self._input_path).stem}.pdf"
+        out_name = (
+            self._out_entry.text().strip() or f"{Path(self._input_path).stem}.pdf"
+        )
         if not out_name.lower().endswith(".pdf"):
             out_name += ".pdf"
 
         default_dir = str(Path(self._input_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self,
+            "Save PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

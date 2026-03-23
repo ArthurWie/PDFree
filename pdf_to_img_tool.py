@@ -47,7 +47,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap, assert_file_writable
 
@@ -62,7 +63,7 @@ DPI_OPTIONS = ["72", "96", "150", "200", "300"]
 
 
 class _ExportImagesWorker(QThread):
-    finished = Signal(str, int)   # out_dir, count
+    finished = Signal(str, int)  # out_dir, count
     failed = Signal(str)
     progress = Signal(int)
 
@@ -103,6 +104,8 @@ class _ExportImagesWorker(QThread):
             self.failed.emit(str(exc))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
 FORMAT_OPTIONS = ["PNG", "JPEG"]
 THUMB_SCALE = 0.2
 GRID_COLS = 4
@@ -194,7 +197,8 @@ class _PageCell(QFrame):
 
         if self._pixmap and not self._pixmap.isNull():
             scaled = self._pixmap.scaled(
-                THUMB_W - 8, THUMB_H - 8,
+                THUMB_W - 8,
+                THUMB_H - 8,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -214,8 +218,14 @@ class _PageCell(QFrame):
         f = QFont()
         f.setPointSize(8)
         p.setFont(f)
-        p.drawText(0, THUMB_H, THUMB_W, 22, Qt.AlignmentFlag.AlignCenter,
-                   str(self.page_idx + 1))
+        p.drawText(
+            0,
+            THUMB_H,
+            THUMB_W,
+            22,
+            Qt.AlignmentFlag.AlignCenter,
+            str(self.page_idx + 1),
+        )
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -319,8 +329,7 @@ class PDFToImgTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)

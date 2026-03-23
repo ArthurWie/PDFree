@@ -60,7 +60,8 @@ from colors import (
     EMERALD,
     AMBER,
     AMBER_BG,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -121,13 +122,16 @@ _PDFA_XMP_TEMPLATE = textwrap.dedent(
 def _run_verapdf(path: str) -> dict:
     import shutil
     import subprocess
+
     exe = shutil.which("verapdf")
     if exe is None:
         return {"available": False}
     try:
         result = subprocess.run(
             [exe, "--format", "text", path],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         passed = result.returncode == 0
         return {
@@ -440,8 +444,7 @@ class PDFATool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
         dz_lay.setContentsMargins(10, 0, 10, 0)
@@ -781,9 +784,7 @@ class PDFATool(QWidget):
                 f"color: {EMERALD}; font: 11px; border: none; background: transparent;"
             )
         else:
-            first_lines = "\n".join(
-                verapdf_result.get("output", "").splitlines()[:3]
-            )
+            first_lines = "\n".join(verapdf_result.get("output", "").splitlines()[:3])
             self._verapdf_lbl.setText(f"PDF/A validation failed\n{first_lines}")
             self._verapdf_lbl.setStyleSheet(
                 "color: red; font: 11px; border: none; background: transparent;"

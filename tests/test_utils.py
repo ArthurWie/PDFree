@@ -1,5 +1,3 @@
-import shutil
-from pathlib import Path
 import pytest
 from utils import backup_original, assert_file_writable
 
@@ -39,6 +37,7 @@ def test_assert_file_writable_existing_writable_succeeds(tmp_path):
 
 def test_assert_file_writable_readonly_raises(tmp_path):
     import stat
+
     f = tmp_path / "locked.pdf"
     f.write_bytes(b"x")
     f.chmod(stat.S_IREAD)

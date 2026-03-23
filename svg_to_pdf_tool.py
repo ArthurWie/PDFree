@@ -43,7 +43,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -66,6 +67,7 @@ except ImportError:
 try:
     from PySide6.QtSvg import QSvgRenderer
     from PySide6.QtCore import QByteArray
+
     _HAS_QTSVG = True
 except ImportError:
     _HAS_QTSVG = False
@@ -75,9 +77,9 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXT = {".svg"}
 
 PAGE_SIZES = {
-    "A4":     (595, 842),
+    "A4": (595, 842),
     "Letter": (612, 792),
-    "A3":     (842, 1191),
+    "A3": (842, 1191),
 }
 
 _BACKEND = "cairosvg" if _cairosvg else ("svglib" if _svglib else None)
@@ -300,6 +302,7 @@ class _PreviewWidget(QWidget):
         p.drawRect(draw_x, draw_y, draw_w, draw_h)
 
         from PySide6.QtCore import QRectF
+
         renderer.render(p, QRectF(draw_x, draw_y, draw_w, draw_h))
 
 
@@ -458,8 +461,7 @@ class SvgToPdfTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -491,11 +493,15 @@ class SvgToPdfTool(QWidget):
 
         rm_row = QHBoxLayout()
         rm_row.setSpacing(8)
-        self._rm_btn = _btn("Remove selected", G100, G200, text_color=G700, border=True, h=30)
+        self._rm_btn = _btn(
+            "Remove selected", G100, G200, text_color=G700, border=True, h=30
+        )
         self._rm_btn.setEnabled(False)
         self._rm_btn.clicked.connect(self._remove_selected)
         rm_row.addWidget(self._rm_btn)
-        self._clear_btn = _btn("Clear all", G100, G200, text_color=G700, border=True, h=30)
+        self._clear_btn = _btn(
+            "Clear all", G100, G200, text_color=G700, border=True, h=30
+        )
         self._clear_btn.setEnabled(False)
         self._clear_btn.clicked.connect(self._clear_all)
         rm_row.addWidget(self._clear_btn)
@@ -527,7 +533,9 @@ class SvgToPdfTool(QWidget):
             f" font: 13px; color: {G900}; background: {WHITE};"
         )
         out_row.addWidget(self._out_entry, 1)
-        browse_out_btn = _btn("...", G100, G200, text_color=G700, border=True, h=36, w=36)
+        browse_out_btn = _btn(
+            "...", G100, G200, text_color=G700, border=True, h=36, w=36
+        )
         browse_out_btn.clicked.connect(self._browse_output)
         out_row.addWidget(browse_out_btn)
         bot.addLayout(out_row)

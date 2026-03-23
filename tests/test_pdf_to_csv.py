@@ -10,6 +10,7 @@ from pdf_to_csv_tool import PDFtoCSVTool
 # _parse_page_range
 # ---------------------------------------------------------------------------
 
+
 def test_parse_all(self=None):
     assert PDFtoCSVTool._parse_page_range("all", 5) == [0, 1, 2, 3, 4]
 
@@ -62,6 +63,7 @@ def test_parse_deduplicates():
 # _check_column_consistency
 # ---------------------------------------------------------------------------
 
+
 def test_column_consistency_uniform():
     rows = [["a", "b"], ["c", "d"], ["e", "f"]]
     assert PDFtoCSVTool._check_column_consistency(rows) is None
@@ -87,6 +89,7 @@ def test_column_consistency_single_row():
 # _try_parse_date
 # ---------------------------------------------------------------------------
 
+
 def test_parse_date_iso():
     assert PDFtoCSVTool._try_parse_date("2024-03-15") == "2024-03-15"
 
@@ -110,6 +113,7 @@ def test_parse_date_numeric_string():
 # ---------------------------------------------------------------------------
 # _convert_cell_type
 # ---------------------------------------------------------------------------
+
 
 def test_convert_empty_passthrough():
     assert PDFtoCSVTool._convert_cell_type("", True, True) == ""

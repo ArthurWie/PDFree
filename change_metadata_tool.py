@@ -41,7 +41,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -53,14 +54,14 @@ logger = logging.getLogger(__name__)
 
 # fitz metadata dict keys and their display labels
 _FIELDS = [
-    ("title",        "Title"),
-    ("author",       "Author"),
-    ("subject",      "Subject"),
-    ("keywords",     "Keywords"),
-    ("creator",      "Creator"),
-    ("producer",     "Producer"),
+    ("title", "Title"),
+    ("author", "Author"),
+    ("subject", "Subject"),
+    ("keywords", "Keywords"),
+    ("creator", "Creator"),
+    ("producer", "Producer"),
     ("creationDate", "Creation Date"),
-    ("modDate",      "Modification Date"),
+    ("modDate", "Modification Date"),
 ]
 
 
@@ -240,7 +241,9 @@ class ChangeMetadataTool(QWidget):
             )
             lay.addWidget(lbl)
             lay.addSpacing(4)
-            widget = _field_input(f"Enter {label.lower()}", multiline=key in multiline_keys)
+            widget = _field_input(
+                f"Enter {label.lower()}", multiline=key in multiline_keys
+            )
             self._inputs[key] = widget
             lay.addWidget(widget)
             lay.addSpacing(12)
@@ -311,7 +314,9 @@ class ChangeMetadataTool(QWidget):
         self._meta_card.setStyleSheet(
             f"background: {WHITE}; border: 1px solid {G200}; border-radius: 12px;"
         )
-        self._meta_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._meta_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self._meta_card_lay = QVBoxLayout(self._meta_card)
         self._meta_card_lay.setContentsMargins(24, 20, 24, 20)
         self._meta_card_lay.setSpacing(0)
@@ -395,8 +400,7 @@ class ChangeMetadataTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(56)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         h = QHBoxLayout(dz)
         h.setContentsMargins(10, 0, 10, 0)
@@ -464,7 +468,8 @@ class ChangeMetadataTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self,
+            "Save PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

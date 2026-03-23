@@ -37,7 +37,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -54,7 +55,7 @@ _FF_READ_ONLY = 1
 
 
 class _FormUnlockWorker(QThread):
-    finished = Signal(str, int)   # out_path, fields_modified
+    finished = Signal(str, int)  # out_path, fields_modified
     failed = Signal(str)
 
     def __init__(self, pdf_path, out_path, parent=None):
@@ -317,8 +318,7 @@ class FormUnlockTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(56)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         h = QHBoxLayout(dz)
         h.setContentsMargins(10, 0, 10, 0)
@@ -360,7 +360,8 @@ class FormUnlockTool(QWidget):
             out_name += ".pdf"
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Unlocked PDF",
+            self,
+            "Save Unlocked PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )
@@ -377,7 +378,9 @@ class FormUnlockTool(QWidget):
 
     def _on_save_done(self, _out_path: str, n: int):
         if n == 0:
-            self._status_lbl.setText("No read-only fields found — file saved unchanged.")
+            self._status_lbl.setText(
+                "No read-only fields found — file saved unchanged."
+            )
         else:
             self._status_lbl.setText(f"Done — {n} field(s) unlocked.")
         self._status_lbl.setStyleSheet(

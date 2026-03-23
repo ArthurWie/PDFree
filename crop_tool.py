@@ -45,7 +45,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -183,8 +184,11 @@ class _CropCanvas(QWidget):
 
         if self._pixmap is None or self._pixmap.isNull():
             p.setPen(QColor(G400))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Load a PDF, then drag to\nset the crop region")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Load a PDF, then drag to\nset the crop region",
+            )
             return
 
         cw, ch = self.width(), self.height()
@@ -202,9 +206,12 @@ class _CropCanvas(QWidget):
         p.drawRoundedRect(ox + 4, oy + 4, dw, dh, 4, 4)
 
         # Page
-        scaled = self._pixmap.scaled(dw, dh,
-                                     Qt.AspectRatioMode.KeepAspectRatio,
-                                     Qt.TransformationMode.SmoothTransformation)
+        scaled = self._pixmap.scaled(
+            dw,
+            dh,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         p.drawPixmap(ox, oy, scaled)
 
         # Determine which crop rect to show
@@ -292,8 +299,19 @@ class _CropWorker(QThread):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, pdf_path, out_path, apply_all, current_page, page_w, page_h,
-                 x0, y0, x1, y1):
+    def __init__(
+        self,
+        pdf_path,
+        out_path,
+        apply_all,
+        current_page,
+        page_w,
+        page_h,
+        x0,
+        y0,
+        x1,
+        y1,
+    ):
         super().__init__()
         self._pdf_path = pdf_path
         self._out_path = out_path
@@ -407,8 +425,7 @@ class CropTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
         dz_h.setContentsMargins(10, 0, 10, 0)
@@ -446,7 +463,9 @@ class CropTool(QWidget):
         # Crop info
         lay.addWidget(_section("CROP REGION"))
         lay.addSpacing(8)
-        self._crop_lbl = QLabel("Draw a rectangle on the page\nto define the crop area.")
+        self._crop_lbl = QLabel(
+            "Draw a rectangle on the page\nto define the crop area."
+        )
         self._crop_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; background: transparent; border: none;"
         )
@@ -454,7 +473,9 @@ class CropTool(QWidget):
         lay.addWidget(self._crop_lbl)
         lay.addSpacing(12)
 
-        self._reset_btn = _btn("Reset to Full Page", WHITE, G100, G700, border=True, h=34)
+        self._reset_btn = _btn(
+            "Reset to Full Page", WHITE, G100, G700, border=True, h=34
+        )
         self._reset_btn.setEnabled(False)
         self._reset_btn.clicked.connect(self._reset_crop)
         lay.addWidget(self._reset_btn)
@@ -586,9 +607,7 @@ class CropTool(QWidget):
         pm = _fitz_pix_to_qpixmap(pix)
         self._canvas.set_page(pm, page.rect.width, page.rect.height)
         self._page_lbl.setText(f"{self._current_page + 1} / {self._total_pages}")
-        self._toolbar_lbl.setText(
-            f"Drag to crop — {Path(self._pdf_path).name}"
-        )
+        self._toolbar_lbl.setText(f"Drag to crop — {Path(self._pdf_path).name}")
         self._update_crop_label()
 
     def _prev_page(self):
@@ -627,8 +646,9 @@ class CropTool(QWidget):
     def _save(self):
         x0, y0, x1, y1 = self._canvas.get_crop_rect()
         if x1 - x0 < 4 or y1 - y0 < 4:
-            QMessageBox.warning(self, "No crop region",
-                                "Draw a crop region on the page first.")
+            QMessageBox.warning(
+                self, "No crop region", "Draw a crop region on the page first."
+            )
             return
 
         out_name = self._out_entry.text().strip() or "cropped.pdf"
@@ -637,7 +657,8 @@ class CropTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Cropped PDF",
+            self,
+            "Save Cropped PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )
@@ -652,8 +673,16 @@ class CropTool(QWidget):
         self._status_lbl.setText("Saving...")
 
         self._worker = _CropWorker(
-            self._pdf_path, out_path, apply_all, self._current_page,
-            page_w, page_h, x0, y0, x1, y1,
+            self._pdf_path,
+            out_path,
+            apply_all,
+            self._current_page,
+            page_w,
+            page_h,
+            x0,
+            y0,
+            x1,
+            y1,
         )
         self._worker.finished.connect(self._on_save_done)
         self._worker.failed.connect(self._on_save_failed)

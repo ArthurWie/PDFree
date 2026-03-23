@@ -40,7 +40,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 
 try:
@@ -367,8 +368,7 @@ class RemoveAnnotationsTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(56)
         dz.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         h = QHBoxLayout(dz)
         h.setContentsMargins(10, 0, 10, 0)
@@ -487,7 +487,8 @@ class RemoveAnnotationsTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Clean PDF",
+            self,
+            "Save Clean PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

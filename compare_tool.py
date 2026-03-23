@@ -54,7 +54,8 @@ from colors import (
     TEAL,
     RED,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap, assert_file_writable
 
@@ -231,7 +232,10 @@ class _CompareCanvas(QWidget):
             p.setPen(QColor(G400))
             p.setFont(QFont("Segoe UI", 11))
             p.drawText(
-                0, 0, half_w, h,
+                0,
+                0,
+                half_w,
+                h,
                 Qt.AlignmentFlag.AlignCenter,
                 "No file A",
             )
@@ -256,7 +260,10 @@ class _CompareCanvas(QWidget):
             p.setPen(QColor(G400))
             p.setFont(QFont("Segoe UI", 11))
             p.drawText(
-                half_w, 0, half_w, h,
+                half_w,
+                0,
+                half_w,
+                h,
                 Qt.AlignmentFlag.AlignCenter,
                 "No file B",
             )
@@ -609,9 +616,7 @@ class CompareTool(QWidget):
 
         self._prev_btn = QPushButton()
         self._prev_btn.setIcon(
-            self.style().standardIcon(
-                self.style().StandardPixmap.SP_ArrowLeft
-            )
+            self.style().standardIcon(self.style().StandardPixmap.SP_ArrowLeft)
         )
         self._prev_btn.setFixedSize(30, 30)
         self._prev_btn.setStyleSheet(
@@ -632,9 +637,7 @@ class CompareTool(QWidget):
 
         self._next_btn = QPushButton()
         self._next_btn.setIcon(
-            self.style().standardIcon(
-                self.style().StandardPixmap.SP_ArrowRight
-            )
+            self.style().standardIcon(self.style().StandardPixmap.SP_ArrowRight)
         )
         self._next_btn.setFixedSize(30, 30)
         self._next_btn.setStyleSheet(
@@ -671,6 +674,7 @@ class CompareTool(QWidget):
 
         # Canvas / text diff area (stacked)
         from PySide6.QtWidgets import QStackedWidget
+
         self._content_stack = QStackedWidget()
 
         # Index 0: visual canvas
@@ -715,9 +719,7 @@ class CompareTool(QWidget):
             self._content_stack.setCurrentIndex(1)
 
     def _browse_file(self, which: str):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(which, path)
 
@@ -758,9 +760,7 @@ class CompareTool(QWidget):
 
     def _update_page_label(self):
         if self._total_pages > 0:
-            self._page_lbl.setText(
-                f"Page {self._page_idx + 1} / {self._total_pages}"
-            )
+            self._page_lbl.setText(f"Page {self._page_idx + 1} / {self._total_pages}")
             self._prev_btn.setEnabled(self._page_idx > 0)
             self._next_btn.setEnabled(self._page_idx < self._total_pages - 1)
         else:
@@ -877,8 +877,8 @@ class CompareTool(QWidget):
             chunk_a = " ".join(text_a[i1:i2])
             chunk_b = " ".join(text_b[j1:j2])
             if tag == "equal":
-                html_a.append(f'<span>{chunk_a} </span>')
-                html_b.append(f'<span>{chunk_b} </span>')
+                html_a.append(f"<span>{chunk_a} </span>")
+                html_b.append(f"<span>{chunk_b} </span>")
             elif tag == "delete":
                 html_a.append(
                     f'<span style="background:#FEE2E2; color:#B91C1C;">{chunk_a} </span>'
@@ -900,7 +900,9 @@ class CompareTool(QWidget):
 
     def _run_compare(self):
         if self._doc_a is None or self._doc_b is None:
-            QMessageBox.warning(self, "Missing Files", "Please load both PDF files first.")
+            QMessageBox.warning(
+                self, "Missing Files", "Please load both PDF files first."
+            )
             return
 
         self._compare_btn.setEnabled(False)
@@ -984,7 +986,11 @@ class CompareTool(QWidget):
             event.acceptProposedAction()
 
     def dropEvent(self, event: QDropEvent):
-        urls = [u.toLocalFile() for u in event.mimeData().urls() if u.toLocalFile().lower().endswith(".pdf")]
+        urls = [
+            u.toLocalFile()
+            for u in event.mimeData().urls()
+            if u.toLocalFile().lower().endswith(".pdf")
+        ]
         if len(urls) >= 1 and self._doc_a is None:
             self._load_file("a", urls[0])
             if len(urls) >= 2:

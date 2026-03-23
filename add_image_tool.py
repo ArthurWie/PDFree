@@ -42,7 +42,8 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-    BLUE_MED,)
+    BLUE_MED,
+)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -56,14 +57,14 @@ logger = logging.getLogger(__name__)
 MM_TO_PT = 2.83465
 
 POSITION_PRESETS = {
-    "Full Page":     lambda w, h: fitz.Rect(0, 0, w, h),
-    "Top Left":      lambda w, h: fitz.Rect(0, 0, w * 0.4, h * 0.3),
-    "Top Right":     lambda w, h: fitz.Rect(w * 0.6, 0, w, h * 0.3),
-    "Top Center":    lambda w, h: fitz.Rect(w * 0.25, 0, w * 0.75, h * 0.3),
-    "Bottom Left":   lambda w, h: fitz.Rect(0, h * 0.7, w * 0.4, h),
-    "Bottom Right":  lambda w, h: fitz.Rect(w * 0.6, h * 0.7, w, h),
+    "Full Page": lambda w, h: fitz.Rect(0, 0, w, h),
+    "Top Left": lambda w, h: fitz.Rect(0, 0, w * 0.4, h * 0.3),
+    "Top Right": lambda w, h: fitz.Rect(w * 0.6, 0, w, h * 0.3),
+    "Top Center": lambda w, h: fitz.Rect(w * 0.25, 0, w * 0.75, h * 0.3),
+    "Bottom Left": lambda w, h: fitz.Rect(0, h * 0.7, w * 0.4, h),
+    "Bottom Right": lambda w, h: fitz.Rect(w * 0.6, h * 0.7, w, h),
     "Bottom Center": lambda w, h: fitz.Rect(w * 0.25, h * 0.7, w * 0.75, h),
-    "Center":        lambda w, h: fitz.Rect(w * 0.25, h * 0.35, w * 0.75, h * 0.65),
+    "Center": lambda w, h: fitz.Rect(w * 0.25, h * 0.35, w * 0.75, h * 0.65),
 }
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -109,7 +110,8 @@ class _AddImageWorker(QThread):
             try:
                 page = doc[self._page_idx]
                 page.insert_image(
-                    self._rect, filename=self._img_path,
+                    self._rect,
+                    filename=self._img_path,
                     keep_proportion=self._keep_aspect,
                 )
                 doc.save(self._out_path, garbage=3, deflate=True)
@@ -206,8 +208,7 @@ class AddImageTool(QWidget):
         pdf_drop = QFrame()
         pdf_drop.setFixedHeight(56)
         pdf_drop.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         pdz_lay = QHBoxLayout(pdf_drop)
         pdz_lay.setContentsMargins(10, 0, 10, 0)
@@ -243,8 +244,7 @@ class AddImageTool(QWidget):
         img_drop = QFrame()
         img_drop.setFixedHeight(56)
         img_drop.setStyleSheet(
-            f"background: {G100};"
-            f" border: 2px dashed {G200}; border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         idz_lay = QHBoxLayout(img_drop)
         idz_lay.setContentsMargins(10, 0, 10, 0)
@@ -318,9 +318,7 @@ class AddImageTool(QWidget):
             f"border: 1px solid {G200}; border-radius: 6px; padding: 0 8px;"
             f" font: 13px; color: {G900}; background: {WHITE};"
         )
-        self._page_spin.valueChanged.connect(
-            lambda: self._preview_timer.start(400)
-        )
+        self._page_spin.valueChanged.connect(lambda: self._preview_timer.start(400))
         page_row.addWidget(self._page_spin)
         page_row.addStretch()
         lay.addLayout(page_row)
@@ -336,10 +334,19 @@ class AddImageTool(QWidget):
         lay.addSpacing(8)
 
         self._pos_combo = QComboBox()
-        self._pos_combo.addItems([
-            "Full Page", "Top Left", "Top Right", "Top Center",
-            "Bottom Left", "Bottom Right", "Bottom Center", "Center", "Custom",
-        ])
+        self._pos_combo.addItems(
+            [
+                "Full Page",
+                "Top Left",
+                "Top Right",
+                "Top Center",
+                "Bottom Left",
+                "Bottom Right",
+                "Bottom Center",
+                "Center",
+                "Custom",
+            ]
+        )
         self._pos_combo.setFixedHeight(32)
         self._pos_combo.setStyleSheet(
             f"border: 1px solid {G200}; border-radius: 6px; padding: 0 8px;"
@@ -367,13 +374,21 @@ class AddImageTool(QWidget):
             return e
 
         x_lbl = QLabel("X (mm)")
-        x_lbl.setStyleSheet(f"color: {G700}; font: 12px; background: transparent; border: none;")
+        x_lbl.setStyleSheet(
+            f"color: {G700}; font: 12px; background: transparent; border: none;"
+        )
         y_lbl = QLabel("Y (mm)")
-        y_lbl.setStyleSheet(f"color: {G700}; font: 12px; background: transparent; border: none;")
+        y_lbl.setStyleSheet(
+            f"color: {G700}; font: 12px; background: transparent; border: none;"
+        )
         w_lbl = QLabel("W (mm)")
-        w_lbl.setStyleSheet(f"color: {G700}; font: 12px; background: transparent; border: none;")
+        w_lbl.setStyleSheet(
+            f"color: {G700}; font: 12px; background: transparent; border: none;"
+        )
         h_lbl = QLabel("H (mm)")
-        h_lbl.setStyleSheet(f"color: {G700}; font: 12px; background: transparent; border: none;")
+        h_lbl.setStyleSheet(
+            f"color: {G700}; font: 12px; background: transparent; border: none;"
+        )
 
         self._x_entry = _entry_field("20")
         self._y_entry = _entry_field("20")
@@ -401,9 +416,7 @@ class AddImageTool(QWidget):
         self._chk_aspect.setStyleSheet(
             f"color: {G700}; font: 13px; background: transparent; border: none;"
         )
-        self._chk_aspect.stateChanged.connect(
-            lambda: self._preview_timer.start(400)
-        )
+        self._chk_aspect.stateChanged.connect(lambda: self._preview_timer.start(400))
         lay.addWidget(self._chk_aspect)
 
         lay.addStretch()
@@ -474,7 +487,9 @@ class AddImageTool(QWidget):
         tb.setContentsMargins(16, 0, 16, 0)
         tb.setSpacing(8)
 
-        self._prev_btn = _btn("‹", WHITE, G100, text_color=G700, border=True, h=32, w=32)
+        self._prev_btn = _btn(
+            "‹", WHITE, G100, text_color=G700, border=True, h=32, w=32
+        )
         self._prev_btn.setEnabled(False)
         self._prev_btn.clicked.connect(self._prev_page)
         tb.addWidget(self._prev_btn)
@@ -485,7 +500,9 @@ class AddImageTool(QWidget):
         )
         tb.addWidget(self._toolbar_lbl)
 
-        self._next_btn = _btn("›", WHITE, G100, text_color=G700, border=True, h=32, w=32)
+        self._next_btn = _btn(
+            "›", WHITE, G100, text_color=G700, border=True, h=32, w=32
+        )
         self._next_btn.setEnabled(False)
         self._next_btn.clicked.connect(self._next_page)
         tb.addWidget(self._next_btn)
@@ -506,7 +523,9 @@ class AddImageTool(QWidget):
 
         self._canvas = QLabel("Load a PDF to preview")
         self._canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._canvas.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self._canvas.setStyleSheet(
             f"color: {G400}; font: 16px; background: transparent; border: none;"
         )
@@ -521,9 +540,7 @@ class AddImageTool(QWidget):
     # -----------------------------------------------------------------------
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(path)
 
@@ -569,7 +586,8 @@ class AddImageTool(QWidget):
             self._img_path = ""
             return
         thumb = pix.scaled(
-            64, 64,
+            64,
+            64,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
@@ -660,8 +678,10 @@ class AddImageTool(QWidget):
             rw = max(1, int(rect.width * scale))
             rh = max(1, int(rect.height * scale))
             img_pix = QPixmap(self._img_path).scaled(
-                rw, rh,
-                Qt.AspectRatioMode.KeepAspectRatio if self._chk_aspect.isChecked()
+                rw,
+                rh,
+                Qt.AspectRatioMode.KeepAspectRatio
+                if self._chk_aspect.isChecked()
                 else Qt.AspectRatioMode.IgnoreAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -696,7 +716,8 @@ class AddImageTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self,
+            "Save PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

@@ -1,11 +1,12 @@
 """Tests for clickable link detection and routing in ViewTool."""
+
 import sys
 import pytest
-from pathlib import Path
 
 
 def _get_or_create_app():
     from PySide6.QtWidgets import QApplication
+
     return QApplication.instance() or QApplication(sys.argv)
 
 
@@ -18,6 +19,7 @@ def qapp():
 def pdf_with_uri_link(tmp_path):
     """Create a PDF with a URI link on page 0."""
     import fitz
+
     doc = fitz.open()
     page = doc.new_page(width=200, height=200)
     link = {
@@ -36,6 +38,7 @@ def pdf_with_uri_link(tmp_path):
 def pdf_with_goto_link(tmp_path):
     """Create a 2-page PDF with a GOTO link on page 0 pointing to page 1."""
     import fitz
+
     doc = fitz.open()
     doc.new_page(width=200, height=200)
     doc.new_page(width=200, height=200)
@@ -55,6 +58,7 @@ def test_link_cache_populated_after_load(qapp, pdf_with_uri_link):
     """After opening a PDF, _link_cache should be populated for page 0."""
     from view_tool import ViewTool
     import fitz
+
     vt = ViewTool()
     vt.open_file(pdf_with_uri_link)
     pane = vt.active_pane
@@ -69,8 +73,11 @@ def test_uri_link_fires_open_url(qapp, pdf_with_uri_link, monkeypatch):
     """Clicking on a URI link calls QDesktopServices.openUrl."""
     from view_tool import ViewTool
     from PySide6.QtGui import QDesktopServices
+
     opened = []
-    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", lambda url: opened.append(url.toString())
+    )
     vt = ViewTool()
     vt.open_file(pdf_with_uri_link)
     pane = vt.active_pane
@@ -85,12 +92,13 @@ def test_goto_link_navigates(qapp, pdf_with_goto_link):
     """Clicking on a GOTO link navigates to the target page."""
     from view_tool import ViewTool
     import fitz
+
     vt = ViewTool()
     vt.open_file(pdf_with_goto_link)
     pane = vt.active_pane
     pane._update_link_cache()
     goto_link = next(
-        l for _, l in pane._link_cache if l["kind"] == fitz.LINK_GOTO
+        lnk for _, lnk in pane._link_cache if lnk["kind"] == fitz.LINK_GOTO
     )
     pane._fire_link(goto_link)
     assert pane.active_page == 1
@@ -102,6 +110,7 @@ def test_unknown_link_kind_ignored(qapp, pdf_with_uri_link, monkeypatch, caplog)
     import logging
     from view_tool import ViewTool
     from PySide6.QtGui import QDesktopServices
+
     monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: None)
     vt = ViewTool()
     vt.open_file(pdf_with_uri_link)
