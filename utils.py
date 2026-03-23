@@ -97,7 +97,8 @@ def assert_file_writable(path: Path) -> None:
     path = Path(path)
     if path.exists():
         try:
-            path.open("r+b").close()
+            with path.open("r+b"):
+                pass
         except PermissionError:
             raise PermissionError(
                 f"The file is open in another application. "
