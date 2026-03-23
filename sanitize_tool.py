@@ -88,7 +88,8 @@ class _SanitizeWorker(QThread):
             try:
                 doc.scrub(
                     javascript=self._js,
-                    attachments=self._attach,
+                    attached_files=self._attach,
+                    embedded_files=self._attach,
                     hidden_text=False,
                     reset_fields=False,
                     metadata=self._meta,
@@ -102,9 +103,12 @@ class _SanitizeWorker(QThread):
                 doc.close()
 
             if self._repair:
+                repair_tmp = self._out_path + ".repair.tmp"
                 repair_doc = fitz.open(self._out_path)
-                repair_doc.save(self._out_path, garbage=4, deflate=True, clean=True)
+                repair_doc.save(repair_tmp, garbage=4, deflate=True, clean=True)
                 repair_doc.close()
+                import os
+                os.replace(repair_tmp, self._out_path)
 
             self.finished.emit(self._out_path)
         except PermissionError as exc:
