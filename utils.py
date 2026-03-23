@@ -87,11 +87,9 @@ def assert_file_writable(path: Path) -> None:
     else:
         parent = path.parent
         if not parent.exists():
-            parent.mkdir(parents=True, exist_ok=True)
+            raise PermissionError(f"Cannot write to folder (does not exist): {parent}")
         if not os.access(parent, os.W_OK):
-            raise PermissionError(
-                f"Cannot write to folder: {parent}"
-            )
+            raise PermissionError(f"Cannot write to folder: {parent}")
 
 
 class _WheelToHScroll(QObject):
