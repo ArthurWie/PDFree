@@ -1,5 +1,10 @@
 """Shared Qt utilities for PDFree tool modules."""
 
+import os
+import re
+import shutil
+from pathlib import Path
+
 from PySide6.QtCore import QEvent, QObject, QSize
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QPushButton, QScrollArea
@@ -8,14 +13,20 @@ from colors import G100, G700
 from icons import svg_icon
 
 
-def _fitz_pix_to_qpixmap(pix) -> QPixmap:
-    """Convert a fitz.Pixmap (RGB) to a QPixmap."""
+def _fitz_pix_to_qpixmap(pix, dpr: float = 1.0) -> QPixmap:
+    """Convert a fitz.Pixmap (RGB) to a QPixmap.
+
+    Pass dpr=screen.devicePixelRatio() when the pixmap was rendered at
+    physical resolution so Qt displays it at the correct logical size.
+    """
     try:
         data = pix.samples_mv
     except AttributeError:
         data = pix.samples
     img = QImage(data, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
-    return QPixmap.fromImage(img.copy())
+    pm = QPixmap.fromImage(img.copy())
+    pm.setDevicePixelRatio(dpr)
+    return pm
 
 
 def _make_back_button(text: str, callback, color: str = G700) -> QPushButton:
@@ -34,6 +45,53 @@ def _make_back_button(text: str, callback, color: str = G700) -> QPushButton:
     """)
     btn.clicked.connect(callback)
     return btn
+
+
+_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+}
+
+
+def sanitize_filename(name: str, replacement: str = "_") -> str:
+    name = _UNSAFE.sub(replacement, name).strip(". ")
+    if not name:
+        return "file"
+    stem = name.rsplit(".", 1)[0].upper()
+    if stem in _RESERVED:
+        name = replacement + name
+    return name[:255]
+
+
+def backup_original(src: Path) -> Path:
+    src = Path(src)
+    if not src.exists():
+        raise FileNotFoundError(src)
+    bak = src.with_suffix(src.suffix + ".bak")
+    shutil.copy2(src, bak)
+    return bak
+
+
+def assert_file_writable(path: Path) -> None:
+    path = Path(path)
+    if path.exists():
+        try:
+            path.open("r+b").close()
+        except PermissionError:
+            raise PermissionError(
+                f"The file is open in another application. "
+                f"Close it and try again.\n{path}"
+            )
+    else:
+        parent = path.parent
+        if not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
+        if not os.access(parent, os.W_OK):
+            raise PermissionError(
+                f"Cannot write to folder: {parent}"
+            )
 
 
 class _WheelToHScroll(QObject):
