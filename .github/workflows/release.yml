@@ -33,7 +33,7 @@ jobs:
         run: ruff check .
 
       - name: Run tests
-        run: pytest --tb=short -q
+        run: pytest --tb=short -q --cov=. --cov-report=term-missing --cov-fail-under=18
 
 
   # ──────────────────────────────────────────────
