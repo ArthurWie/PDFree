@@ -1672,6 +1672,19 @@ class ViewTool(QWidget):
 
         right_lay.addWidget(zoom_grp)
 
+        self._btn_split = QPushButton("Split")
+        self._btn_split.setFixedHeight(32)
+        self._btn_split.setCheckable(True)
+        self._btn_split.setToolTip("Side-by-side view")
+        self._btn_split.setStyleSheet(
+            f"QPushButton {{ background: {WHITE}; color: {G700}; border: 1px solid {G300}; "
+            f"border-radius: 6px; font: 12px 'Segoe UI'; padding: 0 10px; }}"
+            f"QPushButton:hover {{ background: {G100}; }}"
+            f"QPushButton:checked {{ background: {BLUE}; color: white; border-color: {BLUE}; }}"
+        )
+        self._btn_split.clicked.connect(self.toggle_split)
+        right_lay.addWidget(self._btn_split)
+
         r_div2 = QFrame()
         r_div2.setFixedSize(1, 24)
         r_div2.setStyleSheet(f"background: {G200}; border: none;")
@@ -1794,6 +1807,7 @@ class ViewTool(QWidget):
         cc_lay = QVBoxLayout(canvas_container)
         cc_lay.setContentsMargins(0, 0, 0, 0)
         cc_lay.setSpacing(0)
+        self._cc_lay = cc_lay
 
         self._vt_scroll_area = QScrollArea()
         self._vt_scroll_area.setWidgetResizable(False)
@@ -4518,24 +4532,29 @@ class ViewTool(QWidget):
         self._tab_widget.removeTab(idx)
         self._tab_widget.setVisible(False)
 
-        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._splitter.setHandleWidth(4)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setHandleWidth(6)
+        self._splitter.setStyleSheet(
+            "QSplitter::handle { background: #D1D5DB; }"
+            "QSplitter::handle:hover { background: #9CA3AF; }"
+        )
 
         right = _RenderPane(self)
         right.modified.connect(lambda p=right: self._update_pane_tab_label(p))
+        right._scroll_area.viewport().installEventFilter(self._vp_filter)
         if pane.path:
             right.load(pane.path)
 
         self._split_left_pane = pane
         self._split_right_pane = right
 
-        pane.setParent(self._splitter)
         self._splitter.addWidget(pane)
         self._splitter.addWidget(right)
         self._splitter.setSizes([500, 500])
-        self._splitter.show()
+        self._cc_lay.insertWidget(0, self._splitter)
 
         self._split_mode = True
+        self._btn_split.setChecked(True)
 
     def close_split(self):
         if not self._split_mode:
@@ -4562,6 +4581,7 @@ class ViewTool(QWidget):
 
         self._tab_widget.setVisible(True)
         self._split_mode = False
+        self._btn_split.setChecked(False)
 
     def cleanup(self):
         if self._split_right_pane is not None:
