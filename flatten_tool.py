@@ -101,7 +101,7 @@ class _FlattenWorker(QThread):
                 if self._annots:
                     doc.bake(annots=True, widgets=True)
                 if self._js or self._links:
-                    doc.scrub(javascript=self._js, links=self._links)
+                    doc.scrub(javascript=self._js, remove_links=self._links)
                 doc.save(self._out_path, garbage=3, deflate=True)
             finally:
                 doc.close()
