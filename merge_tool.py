@@ -8,6 +8,7 @@ Reordering or removing a file instantly updates the preview.
 """
 
 import io
+import logging
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -22,10 +23,9 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QProgressBar,
-    QApplication,
     QDialog,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -49,9 +49,9 @@ from colors import (
     G700,
     G900,
     WHITE,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
-from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
+from utils import _fitz_pix_to_qpixmap, _WheelToHScroll, assert_file_writable
 
 try:
     import fitz
@@ -63,6 +63,7 @@ try:
 except ImportError:
     PdfReader = PdfWriter = None
 
+logger = logging.getLogger(__name__)
 
 # Thumb dimensions for the merge preview
 THUMB_W = 88
@@ -113,8 +114,9 @@ def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPush
 class _FileRow(QFrame):
     """One row in the ordered file list."""
 
-    def __init__(self, path: str, thumb: QPixmap, page_count: int,
-                 color: str, parent=None):
+    def __init__(
+        self, path: str, thumb: QPixmap, page_count: int, color: str, parent=None
+    ):
         super().__init__(parent)
         self.path = path
         self.setFixedHeight(64)
@@ -129,9 +131,7 @@ class _FileRow(QFrame):
         # Colour swatch
         swatch = QFrame()
         swatch.setFixedSize(4, 40)
-        swatch.setStyleSheet(
-            f"background: {color}; border-radius: 2px; border: none;"
-        )
+        swatch.setStyleSheet(f"background: {color}; border-radius: 2px; border: none;")
         lay.addWidget(swatch)
 
         # Thumbnail
@@ -141,7 +141,8 @@ class _FileRow(QFrame):
         thumb_lbl.setStyleSheet("border: none; background: transparent;")
         if thumb and not thumb.isNull():
             scaled = thumb.scaled(
-                34, 46,
+                34,
+                46,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -233,7 +234,8 @@ class _ThumbCell(QFrame):
 
         if self._pixmap and not self._pixmap.isNull():
             scaled = self._pixmap.scaled(
-                THUMB_W - 6, THUMB_H - 6,
+                THUMB_W - 6,
+                THUMB_H - 6,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -251,7 +253,10 @@ class _ThumbCell(QFrame):
         f.setBold(True)
         p.setFont(f)
         p.drawText(
-            0, THUMB_H, THUMB_W, 20,
+            0,
+            THUMB_H,
+            THUMB_W,
+            20,
             Qt.AlignmentFlag.AlignCenter,
             str(self._merged_page_num),
         )
@@ -312,10 +317,10 @@ class _MergePreviewDialog(QDialog):
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
-        self._scroll.setStyleSheet("border: none; background: #E5E7EB;")
+        self._scroll.setStyleSheet(f"border: none; background: {G200};")
 
         self._pages_widget = QWidget()
-        self._pages_widget.setStyleSheet("background: #E5E7EB;")
+        self._pages_widget.setStyleSheet(f"background: {G200};")
         self._pages_lay = QVBoxLayout(self._pages_widget)
         self._pages_lay.setContentsMargins(40, 32, 40, 32)
         self._pages_lay.setSpacing(20)
@@ -338,9 +343,7 @@ class _MergePreviewDialog(QDialog):
             return
 
         total = self._doc.page_count
-        self._title_lbl.setText(
-            f"Preview — {total} page{'s' if total != 1 else ''}"
-        )
+        self._title_lbl.setText(f"Preview — {total} page{'s' if total != 1 else ''}")
 
         for i in range(total):
             # Placeholder while rendering
@@ -391,6 +394,41 @@ class _MergePreviewDialog(QDialog):
 
 # ===========================================================================
 # MergeTool
+class _MergeWorker(QThread):
+    progress = Signal(int)
+    finished = Signal(str, int)  # (out_path, total_files)
+    failed = Signal(str)
+
+    def __init__(self, entries: list, out_path: str):
+        super().__init__()
+        self._entries = entries
+        self._out_path = out_path
+
+    def run(self):
+        import worker_semaphore
+
+        worker_semaphore.acquire()
+        try:
+            assert_file_writable(Path(self._out_path))
+            writer = PdfWriter()
+            total = len(self._entries)
+            for i, entry in enumerate(self._entries):
+                reader = PdfReader(entry["path"])
+                writer.append(reader)
+                self.progress.emit(int((i + 1) / total * 90))
+            with open(self._out_path, "wb") as f:
+                writer.write(f)
+            self.progress.emit(100)
+            self.finished.emit(self._out_path, total)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+        finally:
+            worker_semaphore.release()
+
+
 # ===========================================================================
 
 
@@ -398,13 +436,12 @@ class MergeTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._modified = False
+        self._worker = None
 
         if fitz is None or PdfReader is None:
             lay = QVBoxLayout(self)
             lbl = QLabel(
-                "Missing dependencies.\n\n"
-                "Install with:\n"
-                "  pip install pymupdf pypdf"
+                "Missing dependencies.\n\nInstall with:\n  pip install pymupdf pypdf"
             )
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {G500}; font: 16px;")
@@ -471,7 +508,7 @@ class MergeTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("merge", BLUE, 22))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("Merge PDFs")
         title_lbl.setStyleSheet(
@@ -493,7 +530,7 @@ class MergeTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(52)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -598,7 +635,9 @@ class MergeTool(QWidget):
         )
         tb.addWidget(self._total_lbl)
         tb.addSpacing(12)
-        self._preview_btn = _btn("See Preview", WHITE, G100, G700, border=True, h=32, w=108)
+        self._preview_btn = _btn(
+            "See Preview", WHITE, G100, G700, border=True, h=32, w=108
+        )
         self._preview_btn.setEnabled(False)
         self._preview_btn.clicked.connect(self._open_preview)
         tb.addWidget(self._preview_btn)
@@ -646,6 +685,7 @@ class MergeTool(QWidget):
             # Render cover thumb synchronously (just page 0, small)
             cover = self._render_page_thumb(doc, 0)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -711,8 +751,11 @@ class MergeTool(QWidget):
         for i, entry in enumerate(self._entries):
             color = self._file_color(i)
             row = _FileRow(
-                entry["path"], entry["cover_thumb"],
-                entry["page_count"], color, self._list_widget,
+                entry["path"],
+                entry["cover_thumb"],
+                entry["page_count"],
+                color,
+                self._list_widget,
             )
             row._up_btn.clicked.connect(lambda _=False, idx=i: self._move_up(idx))
             row._down_btn.clicked.connect(lambda _=False, idx=i: self._move_down(idx))
@@ -730,7 +773,8 @@ class MergeTool(QWidget):
         if idx <= 0:
             return
         self._entries[idx], self._entries[idx - 1] = (
-            self._entries[idx - 1], self._entries[idx]
+            self._entries[idx - 1],
+            self._entries[idx],
         )
         self._rebuild_list()
         self._rebuild_preview()
@@ -739,7 +783,8 @@ class MergeTool(QWidget):
         if idx >= len(self._entries) - 1:
             return
         self._entries[idx], self._entries[idx + 1] = (
-            self._entries[idx + 1], self._entries[idx]
+            self._entries[idx + 1],
+            self._entries[idx],
         )
         self._rebuild_list()
         self._rebuild_preview()
@@ -808,8 +853,9 @@ class MergeTool(QWidget):
             f"{total_pages} page{'s' if total_pages != 1 else ''} total"
         )
 
-    def _build_file_section(self, entry: dict, entry_idx: int,
-                             color: str, start_page: int) -> QWidget:
+    def _build_file_section(
+        self, entry: dict, entry_idx: int, color: str, start_page: int
+    ) -> QWidget:
         section = QWidget()
         section.setStyleSheet("background: transparent;")
         sv = QVBoxLayout(section)
@@ -907,30 +953,23 @@ class MergeTool(QWidget):
         self._progress.show()
         self._merge_btn.setEnabled(False)
         self._status_lbl.setText("Merging...")
-        QApplication.processEvents()
 
-        try:
-            writer = PdfWriter()
-            total = len(self._entries)
-            for i, entry in enumerate(self._entries):
-                reader = PdfReader(entry["path"])
-                writer.append(reader)
-                self._progress.setValue(int((i + 1) / total * 90))
-                QApplication.processEvents()
+        self._worker = _MergeWorker(list(self._entries), out_path)
+        self._worker.progress.connect(self._progress.setValue)
+        self._worker.finished.connect(self._on_merge_done)
+        self._worker.failed.connect(self._on_merge_failed)
+        self._worker.start()
 
-            with open(out_path, "wb") as f:
-                writer.write(f)
+    def _on_merge_done(self, out_path: str, total: int):
+        self._status_lbl.setText(f"Saved {total} files → {Path(out_path).name}")
+        self._merge_btn.setEnabled(len(self._entries) >= 2)
+        self._progress.hide()
 
-            self._progress.setValue(100)
-            self._status_lbl.setText(
-                f"Saved {total} files → {Path(out_path).name}"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Merge failed", str(exc))
-            self._status_lbl.setText("Merge failed.")
-        finally:
-            self._merge_btn.setEnabled(len(self._entries) >= 2)
-            self._progress.hide()
+    def _on_merge_failed(self, msg: str):
+        QMessageBox.critical(self, "Merge failed", msg)
+        self._status_lbl.setText("Merge failed.")
+        self._merge_btn.setEnabled(len(self._entries) >= 2)
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

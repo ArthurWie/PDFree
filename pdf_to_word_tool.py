@@ -3,7 +3,9 @@
 PySide6. Requires pdf2docx. Loaded by main.py when the user clicks "PDF to Word".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -39,7 +41,7 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
@@ -47,6 +49,8 @@ try:
     _HAS_PDF2DOCX = True
 except ImportError:
     _HAS_PDF2DOCX = False
+
+logger = logging.getLogger(__name__)
 
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None):
@@ -95,11 +99,15 @@ class _ConvertWorker(QThread):
 
     def run(self):
         try:
+            assert_file_writable(Path(self._out_path))
             cv = _PDF2DocxConverter(self._pdf_path)
             cv.convert(self._out_path, start=self._start, end=self._end)
             cv.close()
             self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
         except Exception as exc:
+            logger.exception("worker failed")
             self.failed.emit(str(exc))
 
 
@@ -152,7 +160,7 @@ class PDFToWordTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("file-text", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("PDF to Word")
         title_lbl.setStyleSheet(
@@ -191,7 +199,7 @@ class PDFToWordTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)

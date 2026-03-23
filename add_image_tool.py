@@ -1,4 +1,6 @@
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -14,12 +16,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QApplication,
     QSpinBox,
     QComboBox,
     QCheckBox,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QPainter,
     QPixmap,
@@ -40,7 +41,8 @@ from colors import (
     G700,
     G900,
     WHITE,
-)
+    EMERALD,
+    BLUE_MED,)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -48,6 +50,8 @@ try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 MM_TO_PT = 2.83465
 
@@ -84,6 +88,41 @@ def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPush
     return b
 
 
+class _AddImageWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, img_path, page_idx, rect, keep_aspect, out_path):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._img_path = img_path
+        self._page_idx = page_idx
+        self._rect = rect
+        self._keep_aspect = keep_aspect
+        self._out_path = out_path
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            doc = fitz.open(self._pdf_path)
+            try:
+                page = doc[self._page_idx]
+                page.insert_image(
+                    self._rect, filename=self._img_path,
+                    keep_proportion=self._keep_aspect,
+                )
+                doc.save(self._out_path, garbage=3, deflate=True)
+            finally:
+                doc.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+
+
 class AddImageTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -99,6 +138,7 @@ class AddImageTool(QWidget):
         self._pdf_path = ""
         self._img_path = ""
         self._page_count = 0
+        self._worker = None
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -142,7 +182,7 @@ class AddImageTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("file-plus", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Add Image")
@@ -166,7 +206,7 @@ class AddImageTool(QWidget):
         pdf_drop = QFrame()
         pdf_drop.setFixedHeight(56)
         pdf_drop.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         pdz_lay = QHBoxLayout(pdf_drop)
@@ -203,7 +243,7 @@ class AddImageTool(QWidget):
         img_drop = QFrame()
         img_drop.setFixedHeight(56)
         img_drop.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         idz_lay = QHBoxLayout(img_drop)
@@ -493,6 +533,7 @@ class AddImageTool(QWidget):
             page_count = doc.page_count
             doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -666,37 +707,37 @@ class AddImageTool(QWidget):
         self._progress.show()
         self._add_btn.setEnabled(False)
         self._status_lbl.setText("Adding image...")
-        QApplication.processEvents()
 
+        page_idx = self._page_spin.value() - 1
+        doc_tmp = fitz.open(self._pdf_path)
         try:
-            doc = fitz.open(self._pdf_path)
-            try:
-                page_idx = self._page_spin.value() - 1
-                page = doc[page_idx]
-                w, h = page.rect.width, page.rect.height
-                rect = self._get_rect(w, h)
-                keep_aspect = self._chk_aspect.isChecked()
-                page.insert_image(rect, filename=self._img_path, keep_proportion=keep_aspect)
-                self._progress.setValue(80)
-                QApplication.processEvents()
-                doc.save(out_path, garbage=3, deflate=True)
-                self._progress.setValue(100)
-            finally:
-                doc.close()
-
-            self._status_lbl.setText("Image added successfully.")
-            self._status_lbl.setStyleSheet(
-                f"color: {GREEN}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Failed", str(exc))
-            self._status_lbl.setText("Failed to add image.")
-            self._status_lbl.setStyleSheet(
-                "color: red; font: 12px; border: none; background: transparent;"
-            )
+            page = doc_tmp[page_idx]
+            w, h = page.rect.width, page.rect.height
+            rect = self._get_rect(w, h)
         finally:
-            self._add_btn.setEnabled(True)
-            self._progress.hide()
+            doc_tmp.close()
+        keep_aspect = self._chk_aspect.isChecked()
+
+        self._worker = _AddImageWorker(
+            self._pdf_path, self._img_path, page_idx, rect, keep_aspect, out_path
+        )
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
+
+    def _on_save_done(self, out_path: str):
+        self._status_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._add_btn.setEnabled(True)
+        self._progress.hide()
+
+    def _on_save_failed(self, msg: str):
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._add_btn.setEnabled(True)
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

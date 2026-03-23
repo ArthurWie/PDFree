@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Crop PDF".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -17,10 +19,9 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QSizePolicy,
-    QApplication,
     QComboBox,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -44,7 +45,7 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -52,6 +53,8 @@ try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 APPLY_MODES = ["All pages", "Current page only"]
 RENDER_SCALE = 1.5
@@ -285,6 +288,53 @@ class _CropCanvas(QWidget):
 # ===========================================================================
 
 
+class _CropWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, apply_all, current_page, page_w, page_h,
+                 x0, y0, x1, y1):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._apply_all = apply_all
+        self._current_page = current_page
+        self._page_w = page_w
+        self._page_h = page_h
+        self._x0 = x0
+        self._y0 = y0
+        self._x1 = x1
+        self._y1 = y1
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            doc = fitz.open(self._pdf_path)
+            for i, page in enumerate(doc):
+                if not self._apply_all and i != self._current_page:
+                    continue
+                if self._apply_all:
+                    fx0 = self._x0 / self._page_w * page.rect.width
+                    fy0 = self._y0 / self._page_h * page.rect.height
+                    fx1 = self._x1 / self._page_w * page.rect.width
+                    fy1 = self._y1 / self._page_h * page.rect.height
+                else:
+                    fx0, fy0, fx1, fy1 = self._x0, self._y0, self._x1, self._y1
+                crop = fitz.Rect(fx0, fy0, fx1, fy1)
+                crop = crop & page.rect
+                if not crop.is_empty:
+                    page.set_cropbox(crop)
+            doc.save(self._out_path, garbage=3, deflate=True)
+            doc.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+
+
 class CropTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -302,6 +352,7 @@ class CropTool(QWidget):
         self._doc = None
         self._total_pages = 0
         self._current_page = 0
+        self._worker = None
         self._build_ui()
         self.setAcceptDrops(True)
 
@@ -339,7 +390,7 @@ class CropTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("scan-line", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("Crop PDF")
         title_lbl.setStyleSheet(
@@ -356,7 +407,7 @@ class CropTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
@@ -513,6 +564,7 @@ class CropTool(QWidget):
         try:
             self._doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -598,38 +650,26 @@ class CropTool(QWidget):
 
         self._save_btn.setEnabled(False)
         self._status_lbl.setText("Saving...")
-        QApplication.processEvents()
 
-        try:
-            doc = fitz.open(self._pdf_path)
-            for i, page in enumerate(doc):
-                if not apply_all and i != self._current_page:
-                    continue
-                if apply_all:
-                    # Scale crop proportionally to this page's dimensions
-                    fx0 = x0 / page_w * page.rect.width
-                    fy0 = y0 / page_h * page.rect.height
-                    fx1 = x1 / page_w * page.rect.width
-                    fy1 = y1 / page_h * page.rect.height
-                else:
-                    fx0, fy0, fx1, fy1 = x0, y0, x1, y1
+        self._worker = _CropWorker(
+            self._pdf_path, out_path, apply_all, self._current_page,
+            page_w, page_h, x0, y0, x1, y1,
+        )
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-                crop = fitz.Rect(fx0, fy0, fx1, fy1)
-                crop = crop & page.rect  # clamp to page bounds
-                if not crop.is_empty:
-                    page.set_cropbox(crop)
+    def _on_save_done(self, out_path: str):
+        self._status_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._save_btn.setEnabled(True)
 
-            doc.save(out_path, garbage=3, deflate=True)
-            doc.close()
-            self._status_lbl.setText(f"Saved: {Path(out_path).name}")
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
-            self._status_lbl.setText("Save failed.")
-        finally:
-            self._save_btn.setEnabled(True)
+    def _on_save_failed(self, msg: str):
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._save_btn.setEnabled(True)
 
     # -----------------------------------------------------------------------
     # Drag and drop

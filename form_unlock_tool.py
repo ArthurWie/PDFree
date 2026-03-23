@@ -1,6 +1,7 @@
-"""Change Metadata Tool – view and edit PDF document metadata.
+"""Form Unlock Tool – remove the read-only flag from every AcroForm field.
 
-PySide6. Loaded by main.py when the user clicks "Change Metadata".
+PySide6. Uses pypdf to clear the ReadOnly bit (Ff bit 0) on each field
+so the resulting PDF can be filled by any viewer.
 """
 
 import logging
@@ -13,8 +14,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QLineEdit,
-    QTextEdit,
-    QScrollArea,
     QHBoxLayout,
     QVBoxLayout,
     QFileDialog,
@@ -22,10 +21,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import (
-    QDragEnterEvent,
-    QDropEvent,
-)
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
 from colors import (
     BLUE,
@@ -45,23 +41,63 @@ from colors import (
 from icons import svg_pixmap
 
 try:
-    import fitz
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import NumberObject, NameObject
+
+    _HAS_PYPDF = True
 except ImportError:
-    fitz = None
+    _HAS_PYPDF = False
 
 logger = logging.getLogger(__name__)
 
-# fitz metadata dict keys and their display labels
-_FIELDS = [
-    ("title",        "Title"),
-    ("author",       "Author"),
-    ("subject",      "Subject"),
-    ("keywords",     "Keywords"),
-    ("creator",      "Creator"),
-    ("producer",     "Producer"),
-    ("creationDate", "Creation Date"),
-    ("modDate",      "Modification Date"),
-]
+_FF_READ_ONLY = 1
+
+
+class _FormUnlockWorker(QThread):
+    finished = Signal(str, int)   # out_path, fields_modified
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, parent=None):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            n = unlock_form_fields(self._pdf_path, self._out_path)
+            self.finished.emit(self._out_path, n)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+def unlock_form_fields(src_path: str, dst_path: str) -> int:
+    """Clear the ReadOnly bit on every AcroForm field.
+
+    Returns the number of fields that were modified.
+    """
+    reader = PdfReader(src_path)
+    writer = PdfWriter()
+    writer.append(reader)
+
+    modified = 0
+    for page in writer.pages:
+        if "/Annots" not in page:
+            continue
+        for annot in page["/Annots"]:
+            obj = annot.get_object()
+            if obj.get("/Type") == "/Annot" and obj.get("/Subtype") == "/Widget":
+                ff = int(obj.get("/Ff", 0))
+                if ff & _FF_READ_ONLY:
+                    obj[NameObject("/Ff")] = NumberObject(ff & ~_FF_READ_ONLY)
+                    modified += 1
+
+    with open(dst_path, "wb") as f:
+        writer.write(f)
+    return modified
 
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPushButton:
@@ -92,65 +128,14 @@ def _section(text: str) -> QLabel:
     return lbl
 
 
-def _field_input(placeholder: str, multiline: bool = False):
-    if multiline:
-        w = QTextEdit()
-        w.setPlaceholderText(placeholder)
-        w.setFixedHeight(72)
-        w.setStyleSheet(
-            f"border: 1px solid {G200}; border-radius: 6px; padding: 6px 10px;"
-            f" font: 13px; color: {G900}; background: {WHITE};"
-        )
-        return w
-    w = QLineEdit()
-    w.setPlaceholderText(placeholder)
-    w.setFixedHeight(36)
-    w.setStyleSheet(
-        f"border: 1px solid {G200}; border-radius: 6px; padding: 0 10px;"
-        f" font: 13px; color: {G900}; background: {WHITE};"
-    )
-    return w
-
-
-# ===========================================================================
-# ChangeMetadataTool
-# ===========================================================================
-
-
-class _ChangeMetadataWorker(QThread):
-    finished = Signal(str)
-    failed = Signal(str)
-
-    def __init__(self, pdf_path, out_path, new_meta):
-        super().__init__()
-        self._pdf_path = pdf_path
-        self._out_path = out_path
-        self._new_meta = new_meta
-
-    def run(self):
-        try:
-            assert_file_writable(Path(self._out_path))
-            backup_original(Path(self._pdf_path))
-            doc = fitz.open(self._pdf_path)
-            doc.set_metadata(self._new_meta)
-            doc.save(self._out_path, garbage=3, deflate=True)
-            doc.close()
-            self.finished.emit(self._out_path)
-        except PermissionError as exc:
-            self.failed.emit(str(exc))
-        except Exception as exc:
-            logger.exception("worker failed")
-            self.failed.emit(str(exc))
-
-
-class ChangeMetadataTool(QWidget):
+class FormUnlockTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._modified = False
 
-        if fitz is None:
+        if not _HAS_PYPDF:
             lay = QVBoxLayout(self)
-            lbl = QLabel("Missing dependency.\n\nInstall with:\n  pip install pymupdf")
+            lbl = QLabel("Missing dependency.\n\nInstall with:\n  pip install pypdf")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {G500}; font: 16px;")
             lay.addWidget(lbl)
@@ -161,10 +146,6 @@ class ChangeMetadataTool(QWidget):
         self._build_ui()
         self.setAcceptDrops(True)
 
-    # -----------------------------------------------------------------------
-    # UI
-    # -----------------------------------------------------------------------
-
     def _build_ui(self):
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -174,16 +155,11 @@ class ChangeMetadataTool(QWidget):
 
     def _build_left_panel(self) -> QWidget:
         left = QWidget()
-        left.setFixedWidth(400)
+        left.setFixedWidth(380)
         left.setStyleSheet(f"background: {WHITE}; border-right: 1px solid {G200};")
         outer = QVBoxLayout(left)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none; background: transparent;")
 
         inner = QWidget()
         inner.setStyleSheet(f"background: {WHITE};")
@@ -191,19 +167,17 @@ class ChangeMetadataTool(QWidget):
         lay.setContentsMargins(24, 24, 24, 12)
         lay.setSpacing(0)
 
-        # Title row
+        # Title
         title_row = QHBoxLayout()
         title_row.setSpacing(12)
         title_row.setContentsMargins(0, 0, 0, 0)
-
         icon_box = QLabel()
         icon_box.setFixedSize(40, 40)
-        icon_box.setPixmap(svg_pixmap("pen-line", BLUE, 20))
+        icon_box.setPixmap(svg_pixmap("unlock", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
-
-        title_lbl = QLabel("Change Metadata")
+        title_lbl = QLabel("Unlock Form Fields")
         title_lbl.setStyleSheet(
             f"color: {G900}; font: bold 20px; background: transparent; border: none;"
         )
@@ -212,42 +186,20 @@ class ChangeMetadataTool(QWidget):
         lay.addLayout(title_row)
         lay.addSpacing(28)
 
-        # File
+        # Source file
         lay.addWidget(_section("SOURCE FILE"))
         lay.addSpacing(8)
-        lay.addWidget(self._build_drop_zone())
+        lay.addWidget(self._drop_zone())
         lay.addSpacing(8)
-
         self._file_lbl = QLabel("No file loaded")
         self._file_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; background: transparent; border: none;"
         )
         self._file_lbl.setWordWrap(True)
         lay.addWidget(self._file_lbl)
-        lay.addSpacing(24)
-
-        # Metadata fields
-        lay.addWidget(_section("METADATA FIELDS"))
-        lay.addSpacing(12)
-
-        self._inputs: dict[str, QLineEdit | QTextEdit] = {}
-        multiline_keys = {"keywords"}
-
-        for key, label in _FIELDS:
-            lbl = QLabel(label)
-            lbl.setStyleSheet(
-                f"color: {G700}; font: 13px; background: transparent; border: none;"
-            )
-            lay.addWidget(lbl)
-            lay.addSpacing(4)
-            widget = _field_input(f"Enter {label.lower()}", multiline=key in multiline_keys)
-            self._inputs[key] = widget
-            lay.addWidget(widget)
-            lay.addSpacing(12)
-
         lay.addStretch()
-        scroll.setWidget(inner)
-        outer.addWidget(scroll, 1)
+
+        outer.addWidget(inner, 1)
 
         # Bottom bar
         bottom = QWidget()
@@ -258,7 +210,7 @@ class ChangeMetadataTool(QWidget):
 
         bot.addWidget(_section("OUTPUT FILE"))
         self._out_entry = QLineEdit()
-        self._out_entry.setPlaceholderText("output.pdf")
+        self._out_entry.setPlaceholderText("output_unlocked.pdf")
         self._out_entry.setFixedHeight(36)
         self._out_entry.setStyleSheet(
             f"border: 1px solid {G200}; border-radius: 6px; padding: 0 10px;"
@@ -266,13 +218,13 @@ class ChangeMetadataTool(QWidget):
         )
         bot.addWidget(self._out_entry)
 
-        self._result_lbl = QLabel("")
-        self._result_lbl.setStyleSheet(
+        self._status_lbl = QLabel("")
+        self._status_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; border: none; background: transparent;"
         )
-        bot.addWidget(self._result_lbl)
+        bot.addWidget(self._status_lbl)
 
-        self._save_btn = _btn("Save with New Metadata", GREEN, GREEN_HOVER, h=42)
+        self._save_btn = _btn("Unlock Form Fields", GREEN, GREEN_HOVER, h=42)
         self._save_btn.setEnabled(False)
         self._save_btn.clicked.connect(self._save)
         bot.addWidget(self._save_btn)
@@ -304,71 +256,41 @@ class ChangeMetadataTool(QWidget):
         content.setStyleSheet(f"background: {G100};")
         cl = QVBoxLayout(content)
         cl.setContentsMargins(32, 32, 32, 32)
-        cl.setSpacing(16)
+        cl.setSpacing(0)
 
-        # Current metadata display card (populated after load)
-        self._meta_card = QFrame()
-        self._meta_card.setStyleSheet(
+        info_card = QFrame()
+        info_card.setStyleSheet(
             f"background: {WHITE}; border: 1px solid {G200}; border-radius: 12px;"
         )
-        self._meta_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._meta_card_lay = QVBoxLayout(self._meta_card)
-        self._meta_card_lay.setContentsMargins(24, 20, 24, 20)
-        self._meta_card_lay.setSpacing(0)
-
-        card_title = QLabel("Current Metadata")
-        card_title.setStyleSheet(
-            f"color: {G900}; font: bold 14px; background: transparent; border: none;"
-        )
-        self._meta_card_lay.addWidget(card_title)
-        self._meta_card_lay.addSpacing(12)
-
-        self._meta_rows: dict[str, QLabel] = {}
-        for key, label in _FIELDS:
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(8)
-            key_lbl = QLabel(f"{label}:")
-            key_lbl.setFixedWidth(120)
-            key_lbl.setStyleSheet(
-                f"color: {G500}; font: 12px; background: transparent; border: none;"
-            )
-            row.addWidget(key_lbl)
-            val_lbl = QLabel("—")
-            val_lbl.setWordWrap(True)
-            val_lbl.setStyleSheet(
-                f"color: {G700}; font: 12px; background: transparent; border: none;"
-            )
-            row.addWidget(val_lbl, 1)
-            self._meta_rows[key] = val_lbl
-            self._meta_card_lay.addLayout(row)
-            self._meta_card_lay.addSpacing(4)
-
-        cl.addWidget(self._meta_card)
-
-        # How it works card
-        tip_card = QFrame()
-        tip_card.setStyleSheet(
-            f"background: {WHITE}; border: 1px solid {G200}; border-radius: 12px;"
-        )
-        tip_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        ic = QVBoxLayout(tip_card)
+        info_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        ic = QVBoxLayout(info_card)
         ic.setContentsMargins(24, 20, 24, 20)
-        ic.setSpacing(0)
+        ic.setSpacing(8)
 
-        tip_title = QLabel("How it works")
+        tip_title = QLabel("About form unlocking")
         tip_title.setStyleSheet(
             f"color: {G900}; font: bold 14px; background: transparent; border: none;"
         )
         ic.addWidget(tip_title)
-        ic.addSpacing(8)
 
-        steps = [
-            "Load a PDF to read its current metadata.",
-            "Edit any field on the left — leave fields blank to clear them.",
-            "Save to write a new PDF with the updated metadata.",
+        tips = [
+            (
+                "Read-only fields",
+                "PDF forms can have individual fields marked read-only via the Ff flag. "
+                "This prevents viewers from letting users type into them.",
+            ),
+            (
+                "What this tool does",
+                "Clears the ReadOnly bit on every AcroForm field, producing a new PDF "
+                "where all fields are fillable.",
+            ),
+            (
+                "Limitations",
+                "Does not bypass password-based restrictions. "
+                "The source PDF must be openable without a password.",
+            ),
         ]
-        for step in steps:
+        for term, desc in tips:
             row = QHBoxLayout()
             row.setContentsMargins(0, 4, 0, 0)
             row.setSpacing(10)
@@ -378,7 +300,7 @@ class ChangeMetadataTool(QWidget):
                 f"color: {BLUE}; font: bold 14px; background: transparent; border: none;"
             )
             row.addWidget(dot)
-            txt = QLabel(step)
+            txt = QLabel(f"<b>{term}</b> — {desc}")
             txt.setWordWrap(True)
             txt.setStyleSheet(
                 f"color: {G700}; font: 12px; background: transparent; border: none;"
@@ -386,12 +308,12 @@ class ChangeMetadataTool(QWidget):
             row.addWidget(txt, 1)
             ic.addLayout(row)
 
-        cl.addWidget(tip_card)
+        cl.addWidget(info_card)
         cl.addStretch()
         v.addWidget(content, 1)
         return right
 
-    def _build_drop_zone(self) -> QFrame:
+    def _drop_zone(self) -> QFrame:
         dz = QFrame()
         dz.setFixedHeight(56)
         dz.setStyleSheet(
@@ -416,93 +338,58 @@ class ChangeMetadataTool(QWidget):
         h.addStretch()
         return dz
 
-    # -----------------------------------------------------------------------
-    # File loading
-    # -----------------------------------------------------------------------
-
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(path)
 
     def _load_file(self, path: str):
-        try:
-            doc = fitz.open(path)
-            meta = doc.metadata
-            doc.close()
-        except Exception as exc:
-            logger.exception("could not open pdf")
-            QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
-            return
-
         self._pdf_path = path
         name = Path(path).name
         self._file_lbl.setText(name)
         self._toolbar_lbl.setText(name)
-        self._out_entry.setText(f"{Path(path).stem}_metadata.pdf")
-        self._result_lbl.setText("")
+        self._out_entry.setText(f"{Path(path).stem}_unlocked.pdf")
         self._save_btn.setEnabled(True)
-
-        # Populate left-panel inputs and right-panel display
-        for key, _ in _FIELDS:
-            value = meta.get(key, "") or ""
-            widget = self._inputs[key]
-            if isinstance(widget, QTextEdit):
-                widget.setPlainText(value)
-            else:
-                widget.setText(value)
-            self._meta_rows[key].setText(value if value else "—")
-
-    # -----------------------------------------------------------------------
-    # Save
-    # -----------------------------------------------------------------------
+        self._status_lbl.setText("")
 
     def _save(self):
-        out_name = self._out_entry.text().strip() or "output_metadata.pdf"
+        if not self._pdf_path:
+            return
+        out_name = self._out_entry.text().strip() or "unlocked.pdf"
         if not out_name.lower().endswith(".pdf"):
             out_name += ".pdf"
-
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF",
+            self, "Save Unlocked PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )
         if not out_path:
             return
 
-        new_meta = {}
-        for key, _ in _FIELDS:
-            widget = self._inputs[key]
-            if isinstance(widget, QTextEdit):
-                new_meta[key] = widget.toPlainText().strip()
-            else:
-                new_meta[key] = widget.text().strip()
-
         self._save_btn.setEnabled(False)
-        self._result_lbl.setText("Saving...")
+        self._status_lbl.setText("Unlocking…")
 
-        self._worker = _ChangeMetadataWorker(self._pdf_path, out_path, new_meta)
+        self._worker = _FormUnlockWorker(self._pdf_path, out_path)
         self._worker.finished.connect(self._on_save_done)
         self._worker.failed.connect(self._on_save_failed)
         self._worker.start()
 
-    def _on_save_done(self, out_path: str):
-        self._result_lbl.setText(f"Saved: {Path(out_path).name}")
-        self._result_lbl.setStyleSheet(
+    def _on_save_done(self, _out_path: str, n: int):
+        if n == 0:
+            self._status_lbl.setText("No read-only fields found — file saved unchanged.")
+        else:
+            self._status_lbl.setText(f"Done — {n} field(s) unlocked.")
+        self._status_lbl.setStyleSheet(
             f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
         )
-        self._modified = False
         self._save_btn.setEnabled(True)
 
     def _on_save_failed(self, msg: str):
-        QMessageBox.critical(self, "Save failed", msg)
-        self._result_lbl.setText("Save failed.")
+        logger.error("form unlock failed: %s", msg)
+        QMessageBox.critical(self, "Failed", msg)
+        self._status_lbl.setText("Failed.")
         self._save_btn.setEnabled(True)
-
-    # -----------------------------------------------------------------------
-    # Drag and drop
-    # -----------------------------------------------------------------------
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():

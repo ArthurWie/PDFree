@@ -10,7 +10,9 @@ eBook     – re-render at 96 DPI. Good balance for digital reading.
 Print     – re-render at 150 DPI. Near-print quality with size savings.
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -25,9 +27,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QApplication,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
@@ -49,7 +50,7 @@ from colors import (
     WHITE,
     TEAL,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
@@ -61,6 +62,8 @@ try:
     from pypdf import PdfReader
 except ImportError:
     PdfReader = None
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Preset definitions
@@ -105,9 +108,9 @@ PRESETS = [
 def _fmt_size(n: int) -> str:
     if n < 1024:
         return f"{n} B"
-    if n < 1024 ** 2:
+    if n < 1024**2:
         return f"{n / 1024:.1f} KB"
-    return f"{n / 1024 ** 2:.2f} MB"
+    return f"{n / 1024**2:.2f} MB"
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +232,75 @@ class _PresetCard(QFrame):
         return None
 
 
+class _CompressWorker(QThread):
+    progress = Signal(int)
+    finished = Signal(str)  # out_path
+    failed = Signal(str)
+
+    def __init__(self, pdf_path: str, out_path: str, preset: dict):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._preset = preset
+
+    def run(self):
+        import worker_semaphore
+
+        worker_semaphore.acquire()
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            if self._preset["dpi"] is None:
+                self._lossless()
+            else:
+                self._lossy(self._preset["dpi"])
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+        finally:
+            worker_semaphore.release()
+
+    def _lossless(self):
+        doc = fitz.open(self._pdf_path)
+        try:
+            doc.save(
+                self._out_path,
+                garbage=4,
+                deflate=True,
+                deflate_images=True,
+                deflate_fonts=True,
+                clean=True,
+                use_objstms=True,
+            )
+        finally:
+            doc.close()
+        self.progress.emit(100)
+
+    def _lossy(self, dpi: int):
+        src = fitz.open(self._pdf_path)
+        out = fitz.open()
+        scale = dpi / 72.0
+        mat = fitz.Matrix(scale, scale)
+        total = src.page_count
+        try:
+            for i in range(total):
+                page = src.load_page(i)
+                pix = page.get_pixmap(matrix=mat)
+                w_pt = page.rect.width
+                h_pt = page.rect.height
+                new_page = out.new_page(width=w_pt, height=h_pt)
+                new_page.insert_image(new_page.rect, pixmap=pix)
+                self.progress.emit(int((i + 1) / total * 90))
+            out.save(self._out_path, garbage=4, deflate=True, deflate_images=True)
+        finally:
+            src.close()
+            out.close()
+        self.progress.emit(100)
+
+
 # ===========================================================================
 # CompressTool
 # ===========================================================================
@@ -238,6 +310,7 @@ class CompressTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._modified = False
+        self._worker = None
 
         if fitz is None:
             lay = QVBoxLayout(self)
@@ -294,7 +367,7 @@ class CompressTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("layers", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Compress PDF")
@@ -318,7 +391,7 @@ class CompressTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -350,13 +423,13 @@ class CompressTool(QWidget):
             " background: transparent; border: none;"
         )
         lay.addWidget(sec_preset)
-        lay.addSpacing(10)
+        lay.addSpacing(8)
 
         for preset in PRESETS:
             card = _PresetCard(preset, inner)
             self._preset_cards[preset["id"]] = card
             lay.addWidget(card)
-            lay.addSpacing(6)
+            lay.addSpacing(8)
 
         # Select default
         self._preset_cards["lossless"].set_selected(True)
@@ -457,9 +530,7 @@ class CompressTool(QWidget):
     # -----------------------------------------------------------------------
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if path:
             self._load_file(path)
 
@@ -469,6 +540,7 @@ class CompressTool(QWidget):
             page_count = doc.page_count
             doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -557,9 +629,7 @@ class CompressTool(QWidget):
         pct = (savings / self._original_size * 100) if self._original_size else 0
 
         if savings > 0:
-            savings_lbl = QLabel(
-                f"Saved {_fmt_size(savings)} ({pct:.1f}% smaller)"
-            )
+            savings_lbl = QLabel(f"Saved {_fmt_size(savings)} ({pct:.1f}% smaller)")
             savings_lbl.setStyleSheet(
                 f"color: {EMERALD}; font: bold 13px;"
                 " background: transparent; border: none;"
@@ -574,9 +644,7 @@ class CompressTool(QWidget):
         # Visual bar
         bar_bg = QFrame()
         bar_bg.setFixedHeight(8)
-        bar_bg.setStyleSheet(
-            f"background: {G200}; border-radius: 4px; border: none;"
-        )
+        bar_bg.setStyleSheet(f"background: {G200}; border-radius: 4px; border: none;")
         bar_outer = QVBoxLayout(bar_bg)
         bar_outer.setContentsMargins(0, 0, 0, 0)
 
@@ -618,7 +686,8 @@ class CompressTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Compressed PDF",
+            self,
+            "Save Compressed PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )
@@ -629,86 +698,42 @@ class CompressTool(QWidget):
         self._progress.show()
         self._compress_btn.setEnabled(False)
         self._status_lbl.setText("Compressing...")
-        QApplication.processEvents()
 
         preset = next(p for p in PRESETS if p["id"] == self._preset_id)
+        self._worker = _CompressWorker(self._pdf_path, out_path, preset)
+        self._worker.progress.connect(self._progress.setValue)
+        self._worker.finished.connect(self._on_compress_done)
+        self._worker.failed.connect(self._on_compress_failed)
+        self._worker.start()
 
-        try:
-            if preset["dpi"] is None:
-                self._compress_lossless(out_path)
-            else:
-                self._compress_lossy(out_path, preset["dpi"])
+    def _on_compress_done(self, out_path: str):
+        compressed_size = Path(out_path).stat().st_size
+        savings = self._original_size - compressed_size
+        pct = (savings / self._original_size * 100) if self._original_size else 0
 
-            compressed_size = Path(out_path).stat().st_size
-            savings = self._original_size - compressed_size
-            pct = (savings / self._original_size * 100) if self._original_size else 0
-
-            if savings > 0:
-                self._status_lbl.setText(
-                    f"Saved {_fmt_size(savings)} ({pct:.1f}% smaller)"
-                )
-                self._status_lbl.setStyleSheet(
-                    f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-                )
-            else:
-                self._status_lbl.setText("File is already well-compressed.")
-                self._status_lbl.setStyleSheet(
-                    f"color: {G500}; font: 12px; border: none; background: transparent;"
-                )
-
-            self._show_result(compressed_size)
-
-        except Exception as exc:
-            QMessageBox.critical(self, "Compression failed", str(exc))
-            self._status_lbl.setText("Compression failed.")
+        if savings > 0:
+            self._status_lbl.setText(f"Saved {_fmt_size(savings)} ({pct:.1f}% smaller)")
             self._status_lbl.setStyleSheet(
-                "color: red; font: 12px; border: none; background: transparent;"
+                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
             )
-        finally:
-            self._compress_btn.setEnabled(True)
-            self._progress.hide()
-
-    def _compress_lossless(self, out_path: str):
-        doc = fitz.open(self._pdf_path)
-        try:
-            doc.save(
-                out_path,
-                garbage=4,
-                deflate=True,
-                deflate_images=True,
-                deflate_fonts=True,
-                clean=True,
-                use_objstms=True,
+        else:
+            self._status_lbl.setText("File is already well-compressed.")
+            self._status_lbl.setStyleSheet(
+                f"color: {G500}; font: 12px; border: none; background: transparent;"
             )
-        finally:
-            doc.close()
-        self._progress.setValue(100)
 
-    def _compress_lossy(self, out_path: str, dpi: int):
-        src = fitz.open(self._pdf_path)
-        out = fitz.open()
-        scale = dpi / 72.0
-        mat = fitz.Matrix(scale, scale)
-        total = src.page_count
+        self._show_result(compressed_size)
+        self._compress_btn.setEnabled(True)
+        self._progress.hide()
 
-        try:
-            for i in range(total):
-                page = src.load_page(i)
-                pix = page.get_pixmap(matrix=mat)
-                # Preserve original page dimensions in points
-                w_pt = page.rect.width
-                h_pt = page.rect.height
-                new_page = out.new_page(width=w_pt, height=h_pt)
-                new_page.insert_image(new_page.rect, pixmap=pix)
-                self._progress.setValue(int((i + 1) / total * 90))
-                QApplication.processEvents()
-
-            out.save(out_path, garbage=4, deflate=True, deflate_images=True)
-        finally:
-            src.close()
-            out.close()
-
-        self._progress.setValue(100)
+    def _on_compress_failed(self, msg: str):
+        QMessageBox.critical(self, "Compression failed", msg)
+        self._status_lbl.setText("Compression failed.")
+        self._status_lbl.setStyleSheet(
+            "color: red; font: 12px; border: none; background: transparent;"
+        )
+        self._compress_btn.setEnabled(True)
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

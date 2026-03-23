@@ -3,11 +3,13 @@
 PySide6. Uses LibreOffice headless. Loaded by main.py.
 """
 
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from utils import assert_file_writable
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -43,8 +45,10 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_EXT = {
     ".docx": "Word",
@@ -120,6 +124,7 @@ class _ConvertWorker(QThread):
 
     def run(self):
         try:
+            assert_file_writable(Path(self._out_path))
             with tempfile.TemporaryDirectory() as tmp_dir:
                 result = subprocess.run(
                     [
@@ -147,7 +152,10 @@ class _ConvertWorker(QThread):
 
                 shutil.copy2(str(tmp_pdf), self._out_path)
             self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
         except Exception as exc:
+            logger.exception("worker failed")
             self.failed.emit(str(exc))
 
 
@@ -200,7 +208,7 @@ class OfficeToPDFTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("file-text", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("Office to PDF")
         title_lbl.setStyleSheet(
@@ -257,7 +265,7 @@ class OfficeToPDFTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)

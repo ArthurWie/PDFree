@@ -6,6 +6,7 @@ PySide6. Two-panel layout: left settings, right compare view.
 from __future__ import annotations
 
 import difflib
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -23,12 +24,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QApplication,
     QCheckBox,
     QSlider,
     QTextEdit,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -53,14 +53,17 @@ from colors import (
     WHITE,
     TEAL,
     RED,
-)
+    EMERALD,
+    BLUE_MED,)
 from icons import svg_pixmap
-from utils import _fitz_pix_to_qpixmap
+from utils import _fitz_pix_to_qpixmap, assert_file_writable
 
 try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 MODES = [
     {
@@ -287,6 +290,52 @@ class _CompareCanvas(QWidget):
         p.drawLine(half_w, 0, half_w, h)
 
 
+class _ExportDiffWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, path_a, path_b, out_path):
+        super().__init__()
+        self._path_a = path_a
+        self._path_b = path_b
+        self._out_path = out_path
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            mat = fitz.Matrix(1.5, 1.5)
+            doc_a = fitz.open(self._path_a)
+            doc_b = fitz.open(self._path_b)
+            out = fitz.open()
+            n = min(doc_a.page_count, doc_b.page_count)
+            try:
+                for i in range(n):
+                    pix_a = doc_a[i].get_pixmap(matrix=mat)
+                    page_b_idx = min(i, doc_b.page_count - 1)
+                    pix_b = doc_b[page_b_idx].get_pixmap(matrix=mat)
+                    page_w = pix_a.width * 2
+                    page_h = pix_a.height
+                    page = out.new_page(width=page_w / 1.5, height=page_h / 1.5)
+                    page.insert_image(
+                        fitz.Rect(0, 0, page_w / 1.5 / 2, page_h / 1.5), pixmap=pix_a
+                    )
+                    page.insert_image(
+                        fitz.Rect(page_w / 1.5 / 2, 0, page_w / 1.5, page_h / 1.5),
+                        pixmap=pix_b,
+                    )
+                out.save(self._out_path)
+            finally:
+                doc_a.close()
+                doc_b.close()
+                out.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+
+
 class CompareTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -302,6 +351,7 @@ class CompareTool(QWidget):
         self._diff_rects: list = []
         self._mode_id = "visual"
         self._mode_cards: dict[str, _ModeCard] = {}
+        self._worker = None
 
         if fitz is None:
             lay = QVBoxLayout(self)
@@ -349,7 +399,7 @@ class CompareTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("file-text", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Compare PDFs")
@@ -368,7 +418,7 @@ class CompareTool(QWidget):
             " background: transparent; border: none;"
         )
         lay.addWidget(sec_a)
-        lay.addSpacing(6)
+        lay.addSpacing(8)
 
         row_a = QHBoxLayout()
         row_a.setSpacing(6)
@@ -386,7 +436,7 @@ class CompareTool(QWidget):
         browse_a.clicked.connect(lambda: self._browse_file("a"))
         row_a.addWidget(browse_a)
         lay.addLayout(row_a)
-        lay.addSpacing(20)
+        lay.addSpacing(24)
 
         # File B
         sec_b = QLabel("FILE B")
@@ -395,7 +445,7 @@ class CompareTool(QWidget):
             " background: transparent; border: none;"
         )
         lay.addWidget(sec_b)
-        lay.addSpacing(6)
+        lay.addSpacing(8)
 
         row_b = QHBoxLayout()
         row_b.setSpacing(6)
@@ -422,17 +472,17 @@ class CompareTool(QWidget):
             " background: transparent; border: none;"
         )
         lay.addWidget(sec_mode)
-        lay.addSpacing(10)
+        lay.addSpacing(8)
 
         for mode in MODES:
             card = _ModeCard(mode, inner)
             self._mode_cards[mode["id"]] = card
             lay.addWidget(card)
-            lay.addSpacing(6)
+            lay.addSpacing(8)
 
         self._mode_cards["visual"].set_selected(True)
 
-        lay.addSpacing(16)
+        lay.addSpacing(24)
 
         # Sensitivity (visual mode only)
         self._sensitivity_widget = QWidget()
@@ -675,6 +725,7 @@ class CompareTool(QWidget):
         try:
             doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -856,7 +907,6 @@ class CompareTool(QWidget):
         self._progress.setValue(0)
         self._progress.show()
         self._status_lbl.setText("Comparing…")
-        QApplication.processEvents()
 
         try:
             self._total_pages = min(self._doc_a.page_count, self._doc_b.page_count)
@@ -871,10 +921,10 @@ class CompareTool(QWidget):
                 self._render_text_diff()
 
             self._progress.setValue(50)
-            QApplication.processEvents()
 
             if self._export_chk.isChecked():
                 self._export_diff_pdf()
+                return  # worker will re-enable button and update status
 
             self._progress.setValue(100)
             n_a = self._doc_a.page_count
@@ -883,11 +933,13 @@ class CompareTool(QWidget):
                 f"Done. File A: {n_a} page{'s' if n_a != 1 else ''},"
                 f" File B: {n_b} page{'s' if n_b != 1 else ''}."
             )
+            self._compare_btn.setEnabled(True)
+            self._progress.hide()
 
         except Exception as exc:
+            logger.exception("compare failed")
             QMessageBox.critical(self, "Compare failed", str(exc))
             self._status_lbl.setText("Compare failed.")
-        finally:
             self._compare_btn.setEnabled(True)
             self._progress.hide()
 
@@ -904,36 +956,28 @@ class CompareTool(QWidget):
             "PDF Files (*.pdf)",
         )
         if not out_path:
+            self._compare_btn.setEnabled(True)
+            self._progress.hide()
             return
 
-        mat = fitz.Matrix(1.5, 1.5)
-        out = fitz.open()
-        n = min(self._doc_a.page_count, self._doc_b.page_count)
+        self._worker = _ExportDiffWorker(self._path_a, self._path_b, out_path)
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-        try:
-            for i in range(n):
-                pix_a = self._doc_a[i].get_pixmap(matrix=mat)
-                page_b_idx = min(i, self._doc_b.page_count - 1)
-                pix_b = self._doc_b[page_b_idx].get_pixmap(matrix=mat)
+    def _on_save_done(self, out_path: str):
+        self._status_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._compare_btn.setEnabled(True)
+        self._progress.hide()
 
-                page_w = pix_a.width * 2
-                page_h = pix_a.height
-                page = out.new_page(width=page_w / 1.5, height=page_h / 1.5)
-                page.insert_image(
-                    fitz.Rect(0, 0, page_w / 1.5 / 2, page_h / 1.5),
-                    pixmap=pix_a,
-                )
-                page.insert_image(
-                    fitz.Rect(page_w / 1.5 / 2, 0, page_w / 1.5, page_h / 1.5),
-                    pixmap=pix_b,
-                )
-
-            out.save(out_path)
-            self._status_lbl.setText(f"Diff PDF saved: {os.path.basename(out_path)}")
-        except Exception as e:
-            QMessageBox.warning(self, "Export Error", f"Could not save diff PDF:\n{e}")
-        finally:
-            out.close()
+    def _on_save_failed(self, msg: str):
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._compare_btn.setEnabled(True)
+        self._progress.hide()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():

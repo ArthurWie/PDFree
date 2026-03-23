@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Rotate".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -18,9 +20,8 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QProgressBar,
-    QApplication,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -34,6 +35,7 @@ from colors import (
     BLUE,
     BLUE_HOVER,
     BLUE_DIM,
+    EMERALD,
     GREEN,
     GREEN_HOVER,
     G100,
@@ -44,7 +46,7 @@ from colors import (
     G700,
     G900,
     WHITE,
-)
+    BLUE_MED,)
 from icons import svg_pixmap, svg_icon
 from utils import _fitz_pix_to_qpixmap
 
@@ -58,7 +60,44 @@ try:
 except ImportError:
     PdfReader = PdfWriter = None
 
+logger = logging.getLogger(__name__)
+
 THUMB_W = 110
+
+
+class _RotateWorker(QThread):
+    finished = Signal(str, int)   # out_path, rotated_count
+    failed = Signal(str)
+    progress = Signal(int)
+
+    def __init__(self, pdf_path, out_path, rotations, total_pages, parent=None):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._rotations = rotations
+        self._total_pages = total_pages
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            reader = PdfReader(self._pdf_path)
+            writer = PdfWriter()
+            for i, page in enumerate(reader.pages):
+                extra = self._rotations.get(i, 0)
+                if extra % 360 != 0:
+                    page.rotate(extra)
+                writer.add_page(page)
+                self.progress.emit(int((i + 1) / self._total_pages * 90))
+            with open(self._out_path, "wb") as f:
+                writer.write(f)
+            self.progress.emit(100)
+            rotated_count = sum(1 for v in self._rotations.values() if v % 360 != 0)
+            self.finished.emit(self._out_path, rotated_count)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 THUMB_H = 140
 GRID_COLS = 4
 THUMB_SCALE = 0.25
@@ -212,8 +251,9 @@ class RotateTool(QWidget):
         self._doc = None
         self._total_pages = 0
         self._selected: set[int] = set()
-        self._rotations: dict[int, int] = {}   # page_idx → extra degrees (0/90/180/270)
+        self._rotations: dict[int, int] = {}
         self._cells: list[_PageCell] = []
+        self._worker = None
         self._thumb_timer = QTimer(self)
         self._thumb_timer.setSingleShot(True)
         self._thumb_timer.timeout.connect(self._render_thumbs_deferred)
@@ -267,7 +307,7 @@ class RotateTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("rotate-cw", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Rotate Pages")
@@ -291,7 +331,7 @@ class RotateTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -533,6 +573,7 @@ class RotateTool(QWidget):
         try:
             self._doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -681,38 +722,31 @@ class RotateTool(QWidget):
         self._progress.show()
         self._save_btn.setEnabled(False)
         self._status_lbl.setText("Saving...")
-        QApplication.processEvents()
 
-        try:
-            reader = PdfReader(self._pdf_path)
-            writer = PdfWriter()
-            for i, page in enumerate(reader.pages):
-                extra = self._rotations.get(i, 0)
-                if extra % 360 != 0:
-                    page.rotate(extra)
-                writer.add_page(page)
-                self._progress.setValue(int((i + 1) / self._total_pages * 90))
-                QApplication.processEvents()
+        self._worker = _RotateWorker(
+            self._pdf_path, out_path, dict(self._rotations), self._total_pages
+        )
+        self._worker.progress.connect(self._progress.setValue)
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-            with open(out_path, "wb") as f:
-                writer.write(f)
+    def _on_save_done(self, out_path: str, rotated_count: int):
+        self._status_lbl.setText(
+            f"Saved — {rotated_count} page{'s' if rotated_count != 1 else ''} rotated."
+        )
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._save_btn.setEnabled(True)
+        self._progress.hide()
 
-            self._progress.setValue(100)
-            rotated_count = sum(
-                1 for v in self._rotations.values() if v % 360 != 0
-            )
-            self._status_lbl.setText(
-                f"Saved — {rotated_count} page{'s' if rotated_count != 1 else ''} rotated."
-            )
-            self._status_lbl.setStyleSheet(
-                f"color: {GREEN}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
-            self._status_lbl.setText("Save failed.")
-        finally:
-            self._save_btn.setEnabled(True)
-            self._progress.hide()
+    def _on_save_failed(self, msg: str):
+        logger.error("save failed: %s", msg)
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._save_btn.setEnabled(True)
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

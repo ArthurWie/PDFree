@@ -1,9 +1,6 @@
-"""Image to PDF Tool – combine one or more images into a single PDF.
-
-PySide6. Loaded by main.py when the user clicks "Image to PDF".
-"""
-
 import logging
+import os
+import tempfile
 from pathlib import Path
 from utils import assert_file_writable
 
@@ -24,13 +21,11 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
-    QPixmap,
-    QPainter,
     QColor,
+    QPainter,
     QPen,
     QDragEnterEvent,
     QDropEvent,
-    QImageReader,
 )
 
 from colors import (
@@ -56,30 +51,39 @@ try:
 except ImportError:
     fitz = None
 
+try:
+    import cairosvg as _cairosvg
+except ImportError:
+    _cairosvg = None
+
+try:
+    from svglib import svglib as _svglib
+    from reportlab.graphics import renderPDF as _renderPDF
+except ImportError:
+    _svglib = None
+    _renderPDF = None
+
+try:
+    from PySide6.QtSvg import QSvgRenderer
+    from PySide6.QtCore import QByteArray
+    _HAS_QTSVG = True
+except ImportError:
+    _HAS_QTSVG = False
+
 logger = logging.getLogger(__name__)
 
-SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}
+SUPPORTED_EXT = {".svg"}
 
 PAGE_SIZES = {
-    "A4 Portrait":        (595, 842),
-    "A4 Landscape":       (842, 595),
-    "Letter Portrait":    (612, 792),
-    "Letter Landscape":   (792, 612),
-    "Fit to Image":       None,
+    "A4":     (595, 842),
+    "Letter": (612, 792),
+    "A3":     (842, 1191),
 }
 
-MARGINS = {
-    "None":   0,
-    "Small":  18,
-    "Medium": 36,
-    "Large":  72,
-}
-
-THUMB_W = 64
-THUMB_H = 80
+_BACKEND = "cairosvg" if _cairosvg else ("svglib" if _svglib else None)
 
 
-def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPushButton:
+def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None):
     b = QPushButton(text)
     b.setFixedHeight(h)
     if w:
@@ -98,7 +102,7 @@ def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPush
     return b
 
 
-def _section(text: str) -> QLabel:
+def _section(text):
     lbl = QLabel(text)
     lbl.setStyleSheet(
         f"color: {G500}; font: bold 11px; letter-spacing: 1.2px;"
@@ -107,7 +111,7 @@ def _section(text: str) -> QLabel:
     return lbl
 
 
-def _combo(options: list[str]) -> QComboBox:
+def _combo(options):
     c = QComboBox()
     c.addItems(options)
     c.setFixedHeight(36)
@@ -122,17 +126,12 @@ def _combo(options: list[str]) -> QComboBox:
     return c
 
 
-# ===========================================================================
-# Image Row
-# ===========================================================================
-
-
-class _ImgRow(QFrame):
-    def __init__(self, path: str, thumb: QPixmap, parent=None):
+class _SvgRow(QFrame):
+    def __init__(self, path, parent=None):
         super().__init__(parent)
         self.path = path
         self._selected = False
-        self.setFixedHeight(60)
+        self.setFixedHeight(52)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             f"background: {WHITE}; border: 1px solid {G200}; border-radius: 8px;"
@@ -142,17 +141,12 @@ class _ImgRow(QFrame):
         lay.setContentsMargins(8, 6, 8, 6)
         lay.setSpacing(10)
 
-        thumb_lbl = QLabel()
-        thumb_lbl.setFixedSize(36, 44)
-        thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        thumb_lbl.setStyleSheet("border: none; background: transparent;")
-        if thumb and not thumb.isNull():
-            scaled = thumb.scaled(36, 44, Qt.AspectRatioMode.KeepAspectRatio,
-                                  Qt.TransformationMode.SmoothTransformation)
-            thumb_lbl.setPixmap(scaled)
-        else:
-            thumb_lbl.setPixmap(svg_pixmap("image", G400, 22))
-        lay.addWidget(thumb_lbl)
+        icon_lbl = QLabel()
+        icon_lbl.setFixedSize(32, 32)
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet("border: none; background: transparent;")
+        icon_lbl.setPixmap(svg_pixmap("file-code", G400, 20))
+        lay.addWidget(icon_lbl)
 
         info = QVBoxLayout()
         info.setSpacing(2)
@@ -163,17 +157,11 @@ class _ImgRow(QFrame):
             f"color: {G900}; font: 13px; border: none; background: transparent;"
         )
         name_lbl.setMinimumWidth(0)
-        name_lbl.setMaximumWidth(140)
+        name_lbl.setMaximumWidth(160)
         fm = name_lbl.fontMetrics()
-        name_lbl.setText(fm.elidedText(name, Qt.TextElideMode.ElideMiddle, 140))
+        name_lbl.setText(fm.elidedText(name, Qt.TextElideMode.ElideMiddle, 160))
         name_lbl.setToolTip(name)
         info.addWidget(name_lbl)
-
-        ext_lbl = QLabel(Path(path).suffix.upper().lstrip("."))
-        ext_lbl.setStyleSheet(
-            f"color: {G500}; font: 11px; border: none; background: transparent;"
-        )
-        info.addWidget(ext_lbl)
         lay.addLayout(info, 1)
 
         _arrow_ss = (
@@ -183,19 +171,19 @@ class _ImgRow(QFrame):
             f"QPushButton:disabled {{ color: {G300}; background: {G100}; }}"
         )
 
-        self._up_btn = QPushButton("↑")
+        self._up_btn = QPushButton("\u2191")
         self._up_btn.setFixedSize(26, 26)
         self._up_btn.setStyleSheet(_arrow_ss)
         self._up_btn.setToolTip("Move up")
         lay.addWidget(self._up_btn)
 
-        self._down_btn = QPushButton("↓")
+        self._down_btn = QPushButton("\u2193")
         self._down_btn.setFixedSize(26, 26)
         self._down_btn.setStyleSheet(_arrow_ss)
         self._down_btn.setToolTip("Move down")
         lay.addWidget(self._down_btn)
 
-        self._del_btn = QPushButton("✕")
+        self._del_btn = QPushButton("\u2715")
         self._del_btn.setFixedSize(26, 26)
         self._del_btn.setStyleSheet(
             f"QPushButton {{ border: 1px solid {G200}; border-radius: 5px;"
@@ -205,7 +193,7 @@ class _ImgRow(QFrame):
         self._del_btn.setToolTip("Remove")
         lay.addWidget(self._del_btn)
 
-    def set_selected(self, v: bool):
+    def set_selected(self, v):
         self._selected = v
         if v:
             self.setStyleSheet(
@@ -225,38 +213,43 @@ class _ImgRow(QFrame):
     def _find_tool(self):
         w = self.parent()
         while w:
-            if isinstance(w, ImgToPDFTool):
+            if isinstance(w, SvgToPdfTool):
                 return w
             w = w.parent()
         return None
 
 
-# ===========================================================================
-# Preview Canvas
-# ===========================================================================
-
-
-class _PreviewCanvas(QWidget):
+class _PreviewWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pixmap: QPixmap | None = None
-        self._page_w: float = 595   # A4 portrait default (points)
-        self._page_h: float = 842
-        self._margin: int = 18      # Small default
+        self._svg_data = None
+        self._placeholder = True
         self.setMinimumSize(300, 300)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-    def set_pixmap(self, pm: QPixmap | None):
-        self._pixmap = pm
+    def set_svg(self, path):
+        if not _HAS_QTSVG or not path:
+            self._svg_data = None
+            self._placeholder = True
+            self.update()
+            return
+        try:
+            data = Path(path).read_bytes()
+            renderer = QSvgRenderer(QByteArray(data))
+            if renderer.isValid():
+                self._svg_data = data
+                self._placeholder = False
+            else:
+                self._svg_data = None
+                self._placeholder = True
+        except Exception:
+            self._svg_data = None
+            self._placeholder = True
         self.update()
 
-    def set_page_size(self, w: float, h: float):
-        self._page_w = w
-        self._page_h = h
-        self.update()
-
-    def set_margin(self, m: int):
-        self._margin = m
+    def clear(self):
+        self._svg_data = None
+        self._placeholder = True
         self.update()
 
     def paintEvent(self, _event):
@@ -264,127 +257,150 @@ class _PreviewCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(G100))
 
-        if self._pixmap is None or self._pixmap.isNull():
+        if self._placeholder or self._svg_data is None:
             p.setPen(QColor(G400))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Add images to see\na preview here")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Add SVG files on the left to preview.",
+            )
             return
 
         cw, ch = self.width(), self.height()
         pad = 36
 
-        # Scale the page rectangle to fit the canvas
-        scale = min((cw - pad * 2) / self._page_w, (ch - pad * 2) / self._page_h)
-        pw = int(self._page_w * scale)
-        ph = int(self._page_h * scale)
-        px = (cw - pw) // 2
-        py = (ch - ph) // 2
+        renderer = QSvgRenderer(QByteArray(self._svg_data))
+        default_size = renderer.defaultSize()
+        if default_size.width() <= 0 or default_size.height() <= 0:
+            p.setPen(QColor(G400))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Cannot render SVG.")
+            return
+
+        aspect = default_size.width() / default_size.height()
+        max_w = cw - pad * 2
+        max_h = ch - pad * 2
+        if max_w / aspect <= max_h:
+            draw_w = max_w
+            draw_h = int(max_w / aspect)
+        else:
+            draw_h = max_h
+            draw_w = int(max_h * aspect)
+
+        draw_x = (cw - draw_w) // 2
+        draw_y = (ch - draw_h) // 2
 
         # Drop shadow
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(0, 0, 0, 30))
-        p.drawRoundedRect(px + 4, py + 4, pw, ph, 4, 4)
+        p.drawRoundedRect(draw_x + 4, draw_y + 4, draw_w, draw_h, 4, 4)
 
         # White page background
         p.setBrush(QColor(WHITE))
         p.setPen(QPen(QColor(G200), 1))
-        p.drawRect(px, py, pw, ph)
+        p.drawRect(draw_x, draw_y, draw_w, draw_h)
 
-        # Margin area
-        m = int(self._margin * scale)
-        ix, iy = px + m, py + m
-        iw, ih = pw - 2 * m, ph - 2 * m
-
-        if self._margin > 0 and iw > 0 and ih > 0:
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            pen = QPen(QColor(BLUE_MED), 1, Qt.PenStyle.DashLine)
-            p.setPen(pen)
-            p.drawRect(ix, iy, iw, ih)
-
-        # Image inside margin rect, keeping aspect ratio
-        if iw > 0 and ih > 0:
-            img_scale = min(iw / self._pixmap.width(), ih / self._pixmap.height())
-            dw = int(self._pixmap.width() * img_scale)
-            dh = int(self._pixmap.height() * img_scale)
-            dx = ix + (iw - dw) // 2
-            dy = iy + (ih - dh) // 2
-            scaled = self._pixmap.scaled(
-                dw, dh,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            p.drawPixmap(dx, dy, scaled)
+        from PySide6.QtCore import QRectF
+        renderer.render(p, QRectF(draw_x, draw_y, draw_w, draw_h))
 
 
-# ===========================================================================
-# ImgToPDFTool
-# ===========================================================================
-
-
-class _ImgToPdfWorker(QThread):
+class _SvgToPdfWorker(QThread):
     finished = Signal(str)
     failed = Signal(str)
+    progress = Signal(int)
 
-    def __init__(self, entries, out_path, page_size, margin):
+    def __init__(self, paths, out_path, page_size):
         super().__init__()
-        self._entries = entries
+        self._paths = paths
         self._out_path = out_path
         self._page_size = page_size
-        self._margin = margin
 
     def run(self):
+        if not self._paths:
+            self.failed.emit("No SVG files provided.")
+            return
+
+        if _BACKEND is None:
+            self.failed.emit(
+                "cairosvg is not installed.\n\n"
+                "Install it with:\n  pip install cairosvg\n\n"
+                "Or install svglib+reportlab:\n  pip install svglib reportlab"
+            )
+            return
+
+        if fitz is None:
+            self.failed.emit(
+                "PyMuPDF is not installed.\n\nInstall with:\n  pip install pymupdf"
+            )
+            return
+
         try:
             assert_file_writable(Path(self._out_path))
-            doc = fitz.open()
-            for entry in self._entries:
-                path = entry["path"]
-                if self._page_size is None:
-                    reader = QImageReader(path)
-                    sz = reader.size()
-                    w_pt = sz.width() * 72 / 96
-                    h_pt = sz.height() * 72 / 96
-                    pw, ph = max(w_pt, 72), max(h_pt, 72)
-                else:
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+            return
+
+        tmp_pdfs = []
+        total = len(self._paths)
+        try:
+            for i, svg_path in enumerate(self._paths):
+                if not os.path.exists(svg_path):
+                    raise FileNotFoundError(f"File not found: {svg_path}")
+
+                fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+                os.close(fd)
+                tmp_pdfs.append(tmp_path)
+
+                if _BACKEND == "cairosvg":
                     pw, ph = self._page_size
-                page = doc.new_page(width=pw, height=ph)
-                rect = fitz.Rect(
-                    self._margin, self._margin, pw - self._margin, ph - self._margin
-                )
-                page.insert_image(rect, filename=path, keep_proportion=True)
-            doc.save(self._out_path, garbage=3, deflate=True)
-            doc.close()
+                    _cairosvg.svg2pdf(
+                        url=svg_path,
+                        write_to=tmp_path,
+                        output_width=pw,
+                        output_height=ph,
+                    )
+                else:
+                    drawing = _svglib.svg2rlg(svg_path)
+                    if drawing is None:
+                        raise ValueError(f"svglib could not parse: {svg_path}")
+                    _renderPDF.drawToFile(drawing, tmp_path)
+
+                self.progress.emit(int((i + 1) / total * 90))
+
+            merged = fitz.open()
+            for tmp_path in tmp_pdfs:
+                src = fitz.open(tmp_path)
+                merged.insert_pdf(src)
+                src.close()
+
+            merged.save(self._out_path, garbage=3, deflate=True)
+            merged.close()
+            self.progress.emit(100)
             self.finished.emit(self._out_path)
+
         except PermissionError as exc:
             self.failed.emit(str(exc))
         except Exception as exc:
-            logger.exception("worker failed")
+            logger.exception("SVG to PDF worker failed")
             self.failed.emit(str(exc))
+        finally:
+            for tmp_path in tmp_pdfs:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
 
-class ImgToPDFTool(QWidget):
+class SvgToPdfTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._modified = False
 
-        if fitz is None:
-            lay = QVBoxLayout(self)
-            lbl = QLabel("Missing dependency.\n\nInstall with:\n  pip install pymupdf")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(f"color: {G500}; font: 16px;")
-            lay.addWidget(lbl)
-            return
-
-        self._entries: list[dict] = []   # {path, thumb}
-        self._rows: list[_ImgRow] = []
-        self._selected_idx: int = -1
+        self._paths = []
+        self._rows = []
+        self._selected_idx = -1
         self._worker = None
 
         self._build_ui()
         self.setAcceptDrops(True)
-
-    # -----------------------------------------------------------------------
-    # UI
-    # -----------------------------------------------------------------------
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -399,9 +415,9 @@ class ImgToPDFTool(QWidget):
         body_lay.addWidget(self._build_right_panel(), 1)
         root.addWidget(body, 1)
 
-    def _build_left_panel(self) -> QWidget:
+    def _build_left_panel(self):
         left = QWidget()
-        left.setFixedWidth(380)
+        left.setFixedWidth(320)
         left.setStyleSheet(f"background: {WHITE}; border-right: 1px solid {G200};")
         outer = QVBoxLayout(left)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -418,17 +434,16 @@ class ImgToPDFTool(QWidget):
         lay.setContentsMargins(24, 24, 24, 12)
         lay.setSpacing(0)
 
-        # Title
         title_row = QHBoxLayout()
         title_row.setSpacing(12)
         title_row.setContentsMargins(0, 0, 0, 0)
         icon_box = QLabel()
         icon_box.setFixedSize(40, 40)
-        icon_box.setPixmap(svg_pixmap("image", BLUE, 20))
+        icon_box.setPixmap(svg_pixmap("file-code", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
-        title_lbl = QLabel("Image to PDF")
+        title_lbl = QLabel("SVG to PDF")
         title_lbl.setStyleSheet(
             f"color: {G900}; font: bold 20px; background: transparent; border: none;"
         )
@@ -437,8 +452,7 @@ class ImgToPDFTool(QWidget):
         lay.addLayout(title_row)
         lay.addSpacing(28)
 
-        # Images section
-        lay.addWidget(_section("IMAGES"))
+        lay.addWidget(_section("SVG FILES"))
         lay.addSpacing(8)
 
         dz = QFrame()
@@ -451,16 +465,16 @@ class ImgToPDFTool(QWidget):
         dz_h.setContentsMargins(10, 0, 10, 0)
         dz_h.setSpacing(8)
         ic = QLabel()
-        ic.setPixmap(svg_pixmap("image", G400, 18))
+        ic.setPixmap(svg_pixmap("file-code", G400, 18))
         ic.setStyleSheet("border: none; background: transparent;")
         dz_h.addWidget(ic)
-        dz_lbl = QLabel("Drop images here or")
+        dz_lbl = QLabel("Drop SVG files here or")
         dz_lbl.setStyleSheet(
             f"color: {G500}; font: 13px; border: none; background: transparent;"
         )
         dz_h.addWidget(dz_lbl)
         add_btn = _btn("Add", BLUE, BLUE_HOVER, h=30, w=60)
-        add_btn.clicked.connect(self._browse_images)
+        add_btn.clicked.connect(self._browse_svgs)
         dz_h.addWidget(add_btn)
         dz_h.addStretch()
         lay.addWidget(dz)
@@ -473,29 +487,30 @@ class ImgToPDFTool(QWidget):
         self._list_lay.setSpacing(5)
         self._list_lay.addStretch()
         lay.addWidget(self._list_widget)
+        lay.addSpacing(8)
+
+        rm_row = QHBoxLayout()
+        rm_row.setSpacing(8)
+        self._rm_btn = _btn("Remove selected", G100, G200, text_color=G700, border=True, h=30)
+        self._rm_btn.setEnabled(False)
+        self._rm_btn.clicked.connect(self._remove_selected)
+        rm_row.addWidget(self._rm_btn)
+        self._clear_btn = _btn("Clear all", G100, G200, text_color=G700, border=True, h=30)
+        self._clear_btn.setEnabled(False)
+        self._clear_btn.clicked.connect(self._clear_all)
+        rm_row.addWidget(self._clear_btn)
+        lay.addLayout(rm_row)
         lay.addSpacing(20)
 
-        # Page size
         lay.addWidget(_section("PAGE SIZE"))
         lay.addSpacing(8)
         self._size_combo = _combo(list(PAGE_SIZES.keys()))
-        self._size_combo.currentIndexChanged.connect(self._update_canvas_settings)
         lay.addWidget(self._size_combo)
-        lay.addSpacing(16)
-
-        # Margin
-        lay.addWidget(_section("MARGIN"))
-        lay.addSpacing(8)
-        self._margin_combo = _combo(list(MARGINS.keys()))
-        self._margin_combo.setCurrentText("Small")
-        self._margin_combo.currentIndexChanged.connect(self._update_canvas_settings)
-        lay.addWidget(self._margin_combo)
 
         lay.addStretch()
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
 
-        # Bottom
         bottom = QWidget()
         bottom.setStyleSheet(f"background: {WHITE}; border-top: 1px solid {G200};")
         bot = QVBoxLayout(bottom)
@@ -503,13 +518,19 @@ class ImgToPDFTool(QWidget):
         bot.setSpacing(10)
 
         bot.addWidget(_section("OUTPUT FILE"))
-        self._out_entry = QLineEdit("images.pdf")
+        out_row = QHBoxLayout()
+        out_row.setSpacing(8)
+        self._out_entry = QLineEdit("output.pdf")
         self._out_entry.setFixedHeight(36)
         self._out_entry.setStyleSheet(
             f"border: 1px solid {G200}; border-radius: 6px; padding: 0 10px;"
             f" font: 13px; color: {G900}; background: {WHITE};"
         )
-        bot.addWidget(self._out_entry)
+        out_row.addWidget(self._out_entry, 1)
+        browse_out_btn = _btn("...", G100, G200, text_color=G700, border=True, h=36, w=36)
+        browse_out_btn.clicked.connect(self._browse_output)
+        out_row.addWidget(browse_out_btn)
+        bot.addLayout(out_row)
 
         self._status_lbl = QLabel("")
         self._status_lbl.setStyleSheet(
@@ -536,7 +557,7 @@ class ImgToPDFTool(QWidget):
         outer.addWidget(bottom)
         return left
 
-    def _build_right_panel(self) -> QWidget:
+    def _build_right_panel(self):
         right = QWidget()
         right.setStyleSheet(f"background: {G100};")
         v = QVBoxLayout(right)
@@ -548,7 +569,7 @@ class ImgToPDFTool(QWidget):
         toolbar.setStyleSheet(f"background: {WHITE}; border-bottom: 1px solid {G200};")
         tb = QHBoxLayout(toolbar)
         tb.setContentsMargins(16, 0, 16, 0)
-        self._toolbar_lbl = QLabel("No images added")
+        self._toolbar_lbl = QLabel("No SVG files added")
         self._toolbar_lbl.setStyleSheet(
             f"color: {G700}; font: 13px; background: transparent; border: none;"
         )
@@ -556,37 +577,34 @@ class ImgToPDFTool(QWidget):
         tb.addStretch()
         v.addWidget(toolbar)
 
-        self._canvas = _PreviewCanvas()
-        v.addWidget(self._canvas, 1)
+        self._preview = _PreviewWidget()
+        v.addWidget(self._preview, 1)
         return right
 
-    # -----------------------------------------------------------------------
-    # File management
-    # -----------------------------------------------------------------------
-
-    def _browse_images(self):
+    def _browse_svgs(self):
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Add Images", "",
-            "Images (*.jpg *.jpeg *.png *.bmp *.gif *.tiff *.tif *.webp)",
+            self, "Add SVG Files", "", "SVG Files (*.svg)"
         )
         for p in paths:
-            self._add_image(p)
+            self._add_svg(p)
 
-    def _add_image(self, path: str):
+    def _browse_output(self):
+        default = self._out_entry.text().strip() or "output.pdf"
+        if self._paths:
+            default = str(Path(self._paths[0]).parent / Path(default).name)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDF As", default, "PDF Files (*.pdf)"
+        )
+        if path:
+            self._out_entry.setText(path)
+
+    def _add_svg(self, path):
         if Path(path).suffix.lower() not in SUPPORTED_EXT:
             return
-        if any(e["path"] == path for e in self._entries):
+        if path in self._paths:
             return
-
-        pm = QPixmap(path)
-        if pm.isNull():
-            return
-
-        thumb = pm.scaled(THUMB_W, THUMB_H, Qt.AspectRatioMode.KeepAspectRatio,
-                          Qt.TransformationMode.SmoothTransformation)
-        self._entries.append({"path": path, "thumb": thumb, "pixmap": pm})
+        self._paths.append(path)
         self._rebuild_list()
-
         if self._selected_idx == -1:
             self._select(0)
         self._update_btn()
@@ -598,8 +616,8 @@ class ImgToPDFTool(QWidget):
         self._rows.clear()
         self._list_lay.takeAt(self._list_lay.count() - 1)
 
-        for i, entry in enumerate(self._entries):
-            row = _ImgRow(entry["path"], entry["thumb"], self._list_widget)
+        for i, path in enumerate(self._paths):
+            row = _SvgRow(path, self._list_widget)
             row.set_selected(i == self._selected_idx)
             row._up_btn.clicked.connect(lambda _=False, idx=i: self._move_up(idx))
             row._down_btn.clicked.connect(lambda _=False, idx=i: self._move_down(idx))
@@ -613,85 +631,81 @@ class ImgToPDFTool(QWidget):
             row._up_btn.setEnabled(i > 0)
             row._down_btn.setEnabled(i < len(self._rows) - 1)
 
-        n = len(self._entries)
+        n = len(self._paths)
         self._toolbar_lbl.setText(
-            f"{n} image{'s' if n != 1 else ''}" if n else "No images added"
+            f"{n} file{'s' if n != 1 else ''}" if n else "No SVG files added"
         )
+        self._rm_btn.setEnabled(self._selected_idx >= 0 and n > 0)
+        self._clear_btn.setEnabled(n > 0)
 
-    def _move_up(self, idx: int):
+    def _move_up(self, idx):
         if idx <= 0:
             return
-        self._entries[idx], self._entries[idx - 1] = self._entries[idx - 1], self._entries[idx]
+        self._paths[idx], self._paths[idx - 1] = self._paths[idx - 1], self._paths[idx]
         if self._selected_idx == idx:
             self._selected_idx = idx - 1
         elif self._selected_idx == idx - 1:
             self._selected_idx = idx
         self._rebuild_list()
 
-    def _move_down(self, idx: int):
-        if idx >= len(self._entries) - 1:
+    def _move_down(self, idx):
+        if idx >= len(self._paths) - 1:
             return
-        self._entries[idx], self._entries[idx + 1] = self._entries[idx + 1], self._entries[idx]
+        self._paths[idx], self._paths[idx + 1] = self._paths[idx + 1], self._paths[idx]
         if self._selected_idx == idx:
             self._selected_idx = idx + 1
         elif self._selected_idx == idx + 1:
             self._selected_idx = idx
         self._rebuild_list()
 
-    def _remove(self, idx: int):
-        self._entries.pop(idx)
-        if self._selected_idx >= len(self._entries):
-            self._selected_idx = len(self._entries) - 1
+    def _remove(self, idx):
+        self._paths.pop(idx)
+        if self._selected_idx >= len(self._paths):
+            self._selected_idx = len(self._paths) - 1
         self._rebuild_list()
         if self._selected_idx >= 0:
             self._select(self._selected_idx)
         else:
-            self._canvas.set_pixmap(None)
+            self._preview.clear()
         self._update_btn()
 
-    def _on_row_clicked(self, row: _ImgRow):
+    def _remove_selected(self):
+        if self._selected_idx >= 0:
+            self._remove(self._selected_idx)
+
+    def _clear_all(self):
+        self._paths.clear()
+        self._selected_idx = -1
+        self._rebuild_list()
+        self._preview.clear()
+        self._update_btn()
+
+    def _on_row_clicked(self, row):
         idx = self._rows.index(row) if row in self._rows else -1
         if idx != -1:
             self._select(idx)
 
-    def _select(self, idx: int):
+    def _select(self, idx):
         self._selected_idx = idx
         for i, row in enumerate(self._rows):
             row.set_selected(i == idx)
-        if 0 <= idx < len(self._entries):
-            self._canvas.set_pixmap(self._entries[idx]["pixmap"])
-            self._update_canvas_settings()
-
-    def _update_canvas_settings(self):
-        margin = MARGINS[self._margin_combo.currentText()]
-        self._canvas.set_margin(margin)
-
-        size_key = self._size_combo.currentText()
-        page_size = PAGE_SIZES[size_key]
-        if page_size is not None:
-            self._canvas.set_page_size(page_size[0], page_size[1])
-        elif 0 <= self._selected_idx < len(self._entries):
-            # Fit to Image: derive page size from actual image dimensions
-            pm = self._entries[self._selected_idx]["pixmap"]
-            # pixels → points at 96 DPI
-            w_pt = pm.width() * 72 / 96
-            h_pt = pm.height() * 72 / 96
-            self._canvas.set_page_size(max(w_pt, 72), max(h_pt, 72))
+        if 0 <= idx < len(self._paths):
+            self._preview.set_svg(self._paths[idx])
+        self._rm_btn.setEnabled(True)
 
     def _update_btn(self):
-        self._convert_btn.setEnabled(len(self._entries) > 0)
-
-    # -----------------------------------------------------------------------
-    # Convert
-    # -----------------------------------------------------------------------
+        self._convert_btn.setEnabled(len(self._paths) > 0)
 
     def _convert(self):
-        if not self._entries:
+        if not self._paths:
             return
 
-        out_name = self._out_entry.text().strip() or "images.pdf"
+        out_name = self._out_entry.text().strip() or "output.pdf"
         if not out_name.lower().endswith(".pdf"):
             out_name += ".pdf"
+
+        if not os.path.isabs(out_name) and self._paths:
+            out_name = str(Path(self._paths[0]).parent / out_name)
 
         out_path, _ = QFileDialog.getSaveFileName(
             self, "Save PDF", out_name, "PDF Files (*.pdf)"
@@ -701,34 +715,37 @@ class ImgToPDFTool(QWidget):
 
         size_key = self._size_combo.currentText()
         page_size = PAGE_SIZES[size_key]
-        margin = MARGINS[self._margin_combo.currentText()]
+
         self._progress.setValue(0)
         self._progress.show()
         self._convert_btn.setEnabled(False)
         self._status_lbl.setText("Converting...")
+        self._status_lbl.setStyleSheet(
+            f"color: {G500}; font: 12px; border: none; background: transparent;"
+        )
 
-        self._worker = _ImgToPdfWorker(list(self._entries), out_path, page_size, margin)
-        self._worker.finished.connect(self._on_save_done)
-        self._worker.failed.connect(self._on_save_failed)
+        self._worker = _SvgToPdfWorker(list(self._paths), out_path, page_size)
+        self._worker.finished.connect(self._on_done)
+        self._worker.failed.connect(self._on_failed)
+        self._worker.progress.connect(self._progress.setValue)
         self._worker.start()
 
-    def _on_save_done(self, out_path: str):
+    def _on_done(self, out_path):
         self._status_lbl.setText(f"Saved: {Path(out_path).name}")
         self._status_lbl.setStyleSheet(
             f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
         )
-        self._convert_btn.setEnabled(len(self._entries) > 0)
+        self._convert_btn.setEnabled(len(self._paths) > 0)
         self._progress.hide()
 
-    def _on_save_failed(self, msg: str):
-        QMessageBox.critical(self, "Save failed", msg)
+    def _on_failed(self, msg):
+        QMessageBox.critical(self, "Conversion failed", msg)
         self._status_lbl.setText("Conversion failed.")
-        self._convert_btn.setEnabled(len(self._entries) > 0)
+        self._status_lbl.setStyleSheet(
+            f"color: {G500}; font: 12px; border: none; background: transparent;"
+        )
+        self._convert_btn.setEnabled(len(self._paths) > 0)
         self._progress.hide()
-
-    # -----------------------------------------------------------------------
-    # Drag and drop
-    # -----------------------------------------------------------------------
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
@@ -738,7 +755,7 @@ class ImgToPDFTool(QWidget):
         for url in event.mimeData().urls():
             path = url.toLocalFile()
             if Path(path).suffix.lower() in SUPPORTED_EXT:
-                self._add_image(path)
+                self._add_svg(path)
 
     def cleanup(self):
         pass

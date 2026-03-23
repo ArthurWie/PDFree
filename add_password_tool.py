@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Add Password".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -16,11 +18,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QFileDialog,
+    QInputDialog,
     QMessageBox,
     QSizePolicy,
-    QApplication,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
@@ -40,13 +42,15 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Encryption level options
@@ -59,26 +63,27 @@ ENC_OPTIONS = [
 ]
 
 ENC_MAP = {
-    "aes256": None,   # set after fitz import
+    "aes256": None,  # set after fitz import
     "aes128": None,
     "rc4128": None,
 }
 
 PERMISSIONS = [
-    ("Allow printing (standard quality)", "print",     None),
-    ("Allow printing (high quality)",     "print_hq",  None),
-    ("Allow copying text",                "copy",      None),
-    ("Allow editing content",             "modify",    None),
-    ("Allow adding annotations",          "annotate",  None),
-    ("Allow filling forms",               "forms",     None),
-    ("Allow assembling pages",            "assemble",  None),
+    ("Allow printing (standard quality)", "print", None),
+    ("Allow printing (high quality)", "print_hq", None),
+    ("Allow copying text", "copy", None),
+    ("Allow editing content", "modify", None),
+    ("Allow adding annotations", "annotate", None),
+    ("Allow filling forms", "forms", None),
+    ("Allow assembling pages", "assemble", None),
+    ("Allow extraction for accessibility", "accessibility", None),
 ]
 
 
 def _fmt_size(n: int) -> str:
-    if n < 1024 ** 2:
+    if n < 1024**2:
         return f"{n / 1024:.1f} KB"
-    return f"{n / 1024 ** 2:.2f} MB"
+    return f"{n / 1024**2:.2f} MB"
 
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPushButton:
@@ -194,6 +199,42 @@ class _EncCard(QFrame):
 # ===========================================================================
 
 
+class _AddPasswordWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, enc_const, user_pw, owner_pw, perms):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._enc_const = enc_const
+        self._user_pw = user_pw
+        self._owner_pw = owner_pw
+        self._perms = perms
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            doc = fitz.open(self._pdf_path)
+            doc.save(
+                self._out_path,
+                encryption=self._enc_const,
+                user_pw=self._user_pw,
+                owner_pw=self._owner_pw,
+                permissions=self._perms,
+                garbage=3,
+                deflate=True,
+            )
+            doc.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+
+
 class AddPasswordTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -213,8 +254,10 @@ class AddPasswordTool(QWidget):
 
         self._pdf_path = ""
         self._enc_id = "aes256"
+        self._worker = None
         self._enc_cards: dict[str, _EncCard] = {}
         self._perm_checks: dict[str, QCheckBox] = {}
+        self._is_reencrypt = False  # True when editing an already-encrypted PDF
 
         self._build_ui()
         self.setAcceptDrops(True)
@@ -258,7 +301,7 @@ class AddPasswordTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("lock", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Add Password")
@@ -282,7 +325,26 @@ class AddPasswordTool(QWidget):
         )
         self._file_lbl.setWordWrap(True)
         lay.addWidget(self._file_lbl)
-        lay.addSpacing(24)
+        lay.addSpacing(8)
+
+        self._reencrypt_banner = QFrame()
+        self._reencrypt_banner.setStyleSheet(
+            "background: #FEF9C3; border: 1px solid #FDE047; border-radius: 6px;"
+        )
+        self._reencrypt_banner.setVisible(False)
+        rb_lay = QHBoxLayout(self._reencrypt_banner)
+        rb_lay.setContentsMargins(10, 8, 10, 8)
+        rb_lbl = QLabel(
+            "This PDF is already protected. "
+            "Enter the passwords you want to use (re-encrypt with new permissions)."
+        )
+        rb_lbl.setWordWrap(True)
+        rb_lbl.setStyleSheet(
+            "color: #713F12; font: 12px; background: transparent; border: none;"
+        )
+        rb_lay.addWidget(rb_lbl)
+        lay.addWidget(self._reencrypt_banner)
+        lay.addSpacing(16)
 
         # Passwords
         lay.addWidget(_section("PASSWORDS"))
@@ -364,6 +426,7 @@ class AddPasswordTool(QWidget):
         self._save_btn.setEnabled(False)
         self._save_btn.clicked.connect(self._save)
         bot.addWidget(self._save_btn)
+        self._save_btn_ref = self._save_btn
 
         outer.addWidget(bottom)
         return left
@@ -410,9 +473,18 @@ class AddPasswordTool(QWidget):
         ic.addWidget(tip_title)
 
         tips = [
-            ("User password", "Required to open the file. Anyone without it cannot read the PDF."),
-            ("Owner password", "Controls permissions. If omitted, defaults to the user password."),
-            ("Permissions", "Define what an authenticated user is allowed to do (print, copy, etc.)."),
+            (
+                "User password",
+                "Required to open the file. Anyone without it cannot read the PDF.",
+            ),
+            (
+                "Owner password",
+                "Controls permissions. If omitted, defaults to the user password.",
+            ),
+            (
+                "Permissions",
+                "Define what an authenticated user is allowed to do (print, copy, etc.).",
+            ),
         ]
         for term, desc in tips:
             row = QHBoxLayout()
@@ -441,7 +513,7 @@ class AddPasswordTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(56)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         h = QHBoxLayout(dz)
@@ -452,7 +524,9 @@ class AddPasswordTool(QWidget):
         ic.setStyleSheet("border: none; background: transparent;")
         h.addWidget(ic)
         lbl = QLabel("Drop PDF here or")
-        lbl.setStyleSheet(f"color: {G500}; font: 13px; border: none; background: transparent;")
+        lbl.setStyleSheet(
+            f"color: {G500}; font: 13px; border: none; background: transparent;"
+        )
         h.addWidget(lbl)
         btn = _btn("Browse", BLUE, BLUE_HOVER, h=32, w=80)
         btn.clicked.connect(self._browse)
@@ -472,20 +546,74 @@ class AddPasswordTool(QWidget):
     def _load_file(self, path: str):
         try:
             doc = fitz.open(path)
-            if doc.needs_pass:
-                QMessageBox.warning(self, "Protected file", "This PDF is already password-protected.")
-                doc.close()
-                return
-            doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
+        if doc.needs_pass:
+            doc.close()
+            self._load_encrypted(path)
+            return
+
+        doc.close()
+        self._is_reencrypt = False
+        self._reencrypt_banner.setVisible(False)
+        self._save_btn_ref.setText("Encrypt PDF")
         self._pdf_path = path
         name = Path(path).name
         self._file_lbl.setText(name)
         self._toolbar_lbl.setText(name)
         self._out_entry.setText(f"{Path(path).stem}_protected.pdf")
+        self._validate()
+
+    def _load_encrypted(self, path: str):
+        owner_pw, ok = QInputDialog.getText(
+            self,
+            "Owner password required",
+            "Enter the owner (permissions) password to load this protected PDF:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok:
+            return
+
+        doc = fitz.open(path)
+        level = doc.authenticate(owner_pw)
+        if level < 2:
+            doc.close()
+            QMessageBox.warning(
+                self,
+                "Authentication failed",
+                "Wrong password or the password does not grant owner-level access.",
+            )
+            return
+
+        # Read current permission flags and pre-tick the checkboxes
+        current_perms = doc.permissions
+        doc.close()
+
+        perm_flag_map = {
+            "print": fitz.PDF_PERM_PRINT,
+            "print_hq": fitz.PDF_PERM_PRINT_HQ,
+            "copy": fitz.PDF_PERM_COPY,
+            "modify": fitz.PDF_PERM_MODIFY,
+            "annotate": fitz.PDF_PERM_ANNOTATE,
+            "forms": fitz.PDF_PERM_FORM,
+            "assemble": fitz.PDF_PERM_ASSEMBLE,
+            "accessibility": fitz.PDF_PERM_ACCESSIBILITY,
+        }
+        for key, flag in perm_flag_map.items():
+            if key in self._perm_checks:
+                self._perm_checks[key].setChecked(bool(current_perms & flag))
+
+        self._is_reencrypt = True
+        self._reencrypt_banner.setVisible(True)
+        self._save_btn_ref.setText("Re-encrypt PDF")
+        self._pdf_path = path
+        name = Path(path).name
+        self._file_lbl.setText(name)
+        self._toolbar_lbl.setText(name)
+        self._out_entry.setText(f"{Path(path).stem}_updated.pdf")
         self._validate()
 
     # -----------------------------------------------------------------------
@@ -528,7 +656,8 @@ class AddPasswordTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Encrypted PDF",
+            self,
+            "Save Encrypted PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )
@@ -537,13 +666,14 @@ class AddPasswordTool(QWidget):
 
         perms = 0
         perm_flag_map = {
-            "print":    fitz.PDF_PERM_PRINT,
+            "print": fitz.PDF_PERM_PRINT,
             "print_hq": fitz.PDF_PERM_PRINT_HQ,
-            "copy":     fitz.PDF_PERM_COPY,
-            "modify":   fitz.PDF_PERM_MODIFY,
+            "copy": fitz.PDF_PERM_COPY,
+            "modify": fitz.PDF_PERM_MODIFY,
             "annotate": fitz.PDF_PERM_ANNOTATE,
-            "forms":    fitz.PDF_PERM_FORM,
+            "forms": fitz.PDF_PERM_FORM,
             "assemble": fitz.PDF_PERM_ASSEMBLE,
+            "accessibility": fitz.PDF_PERM_ACCESSIBILITY,
         }
         for key, flag in perm_flag_map.items():
             if self._perm_checks[key].isChecked():
@@ -553,29 +683,25 @@ class AddPasswordTool(QWidget):
 
         self._save_btn.setEnabled(False)
         self._status_lbl.setText("Encrypting...")
-        QApplication.processEvents()
 
-        try:
-            doc = fitz.open(self._pdf_path)
-            doc.save(
-                out_path,
-                encryption=enc_const,
-                user_pw=user_pw,
-                owner_pw=owner_pw,
-                permissions=perms,
-                garbage=3,
-                deflate=True,
-            )
-            doc.close()
-            self._status_lbl.setText(f"Saved: {Path(out_path).name}")
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Encryption failed", str(exc))
-            self._status_lbl.setText("Failed.")
-        finally:
-            self._save_btn.setEnabled(True)
+        self._worker = _AddPasswordWorker(
+            self._pdf_path, out_path, enc_const, user_pw, owner_pw, perms
+        )
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
+
+    def _on_save_done(self, out_path: str):
+        self._status_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._save_btn.setEnabled(True)
+
+    def _on_save_failed(self, msg: str):
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._save_btn.setEnabled(True)
 
     # -----------------------------------------------------------------------
     # Drag and drop

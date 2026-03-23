@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Sanitize".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -18,10 +20,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QApplication,
     QCheckBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
@@ -40,13 +41,75 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
+
+
+class _SanitizeWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+    progress = Signal(int)
+
+    def __init__(
+        self,
+        pdf_path,
+        out_path,
+        js,
+        attach,
+        meta,
+        thumbs,
+        xml,
+        repair,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._js = js
+        self._attach = attach
+        self._meta = meta
+        self._thumbs = thumbs
+        self._xml = xml
+        self._repair = repair
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            doc = fitz.open(self._pdf_path)
+            try:
+                doc.scrub(
+                    javascript=self._js,
+                    attachments=self._attach,
+                    hidden_text=False,
+                    reset_fields=False,
+                    metadata=self._meta,
+                    thumbnails=self._thumbs,
+                    xml_metadata=self._xml,
+                )
+                self.progress.emit(80)
+                doc.save(self._out_path, garbage=4, deflate=True, clean=True)
+                self.progress.emit(100)
+            finally:
+                doc.close()
+
+            if self._repair:
+                repair_doc = fitz.open(self._out_path)
+                repair_doc.save(self._out_path, garbage=4, deflate=True, clean=True)
+                repair_doc.close()
+
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 def _fmt_size(n: int) -> str:
@@ -91,6 +154,7 @@ class SanitizeTool(QWidget):
 
         self._pdf_path = ""
         self._original_size = 0
+        self._worker = None
 
         self._build_ui()
         self.setAcceptDrops(True)
@@ -130,7 +194,7 @@ class SanitizeTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("shield", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Sanitize PDF")
@@ -154,7 +218,7 @@ class SanitizeTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -346,6 +410,7 @@ class SanitizeTool(QWidget):
             page_count = doc.page_count
             doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -472,47 +537,40 @@ class SanitizeTool(QWidget):
         self._status_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; border: none; background: transparent;"
         )
-        QApplication.processEvents()
 
-        try:
-            doc = fitz.open(self._pdf_path)
-            try:
-                doc.scrub(
-                    javascript=self._chk_js.isChecked(),
-                    attachments=self._chk_attach.isChecked(),
-                    hidden_text=False,
-                    reset_fields=False,
-                    metadata=self._chk_meta.isChecked(),
-                    thumbnails=self._chk_thumbs.isChecked(),
-                    xml_metadata=self._chk_xml.isChecked(),
-                )
-                self._progress.setValue(80)
-                QApplication.processEvents()
-                doc.save(out_path, garbage=4, deflate=True, clean=True)
-                self._progress.setValue(100)
-            finally:
-                doc.close()
+        self._worker = _SanitizeWorker(
+            self._pdf_path,
+            out_path,
+            self._chk_js.isChecked(),
+            self._chk_attach.isChecked(),
+            self._chk_meta.isChecked(),
+            self._chk_thumbs.isChecked(),
+            self._chk_xml.isChecked(),
+            self._chk_repair.isChecked(),
+        )
+        self._worker.progress.connect(self._progress.setValue)
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-            if self._chk_repair.isChecked():
-                repair_doc = fitz.open(out_path)
-                repair_doc.save(out_path, garbage=4, deflate=True, clean=True)
-                repair_doc.close()
+    def _on_save_done(self, _out_path: str):
+        self._status_lbl.setText("Done.")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._show_result()
+        self._sanitize_btn.setEnabled(True)
+        self._progress.hide()
 
-            self._status_lbl.setText("Done.")
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-            self._show_result()
-
-        except Exception as exc:
-            QMessageBox.critical(self, "Sanitize failed", str(exc))
-            self._status_lbl.setText("Sanitize failed.")
-            self._status_lbl.setStyleSheet(
-                "color: red; font: 12px; border: none; background: transparent;"
-            )
-        finally:
-            self._sanitize_btn.setEnabled(True)
-            self._progress.hide()
+    def _on_save_failed(self, msg: str):
+        logger.error("sanitize failed: %s", msg)
+        QMessageBox.critical(self, "Sanitize failed", msg)
+        self._status_lbl.setText("Sanitize failed.")
+        self._status_lbl.setStyleSheet(
+            "color: red; font: 12px; border: none; background: transparent;"
+        )
+        self._sanitize_btn.setEnabled(True)
+        self._progress.hide()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():

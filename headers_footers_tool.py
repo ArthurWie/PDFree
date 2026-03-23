@@ -4,7 +4,9 @@ PySide6. Loaded by main.py when the user clicks "Headers & Footers".
 """
 
 import datetime
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -18,10 +20,9 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QSizePolicy,
-    QApplication,
     QSpinBox,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -44,7 +45,7 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -52,6 +53,8 @@ try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 PREVIEW_SCALE = 1.2
 
@@ -213,6 +216,48 @@ class _PreviewCanvas(QWidget):
 # ===========================================================================
 
 
+class _HeadersFootersWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, total_pages, skip, font_size, margin,
+                 filename, header_inputs, footer_inputs):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._total_pages = total_pages
+        self._skip = skip
+        self._font_size = font_size
+        self._margin = margin
+        self._filename = filename
+        self._header_inputs = header_inputs
+        self._footer_inputs = footer_inputs
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            doc = fitz.open(self._pdf_path)
+            for i in range(self._total_pages):
+                if i < self._skip:
+                    continue
+                page = doc[i]
+                page_num = i + 1
+                _apply_zones(
+                    page, self._header_inputs, self._footer_inputs,
+                    page_num, self._total_pages, self._filename,
+                    self._font_size, self._margin,
+                )
+            doc.save(self._out_path, garbage=3, deflate=True)
+            doc.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+
+
 class HeadersFootersTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -230,6 +275,7 @@ class HeadersFootersTool(QWidget):
         self._doc = None
         self._total_pages = 0
         self._preview_page = 0
+        self._worker = None
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(300)
@@ -276,7 +322,7 @@ class HeadersFootersTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("pen-line", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("Headers & Footers")
         title_lbl.setStyleSheet(
@@ -293,7 +339,7 @@ class HeadersFootersTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
@@ -531,6 +577,7 @@ class HeadersFootersTool(QWidget):
         try:
             self._doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -634,35 +681,26 @@ class HeadersFootersTool(QWidget):
 
         self._save_btn.setEnabled(False)
         self._status_lbl.setText("Saving...")
-        QApplication.processEvents()
 
-        try:
-            doc = fitz.open(self._pdf_path)
-            for i in range(total):
-                if i < skip:
-                    continue
-                page = doc[i]
-                page_num = i + 1
-                _apply_zones(
-                    page, header_inputs, footer_inputs,
-                    page_num, total, filename, font_size, margin,
-                )
+        self._worker = _HeadersFootersWorker(
+            self._pdf_path, out_path, total, skip, font_size, margin,
+            filename, header_inputs, footer_inputs,
+        )
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-            doc.save(out_path, garbage=3, deflate=True)
-            doc.close()
+    def _on_save_done(self, out_path: str):
+        self._status_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._save_btn.setEnabled(True)
 
-            stamped = total - skip
-            self._status_lbl.setText(
-                f"Saved — {stamped} page{'s' if stamped != 1 else ''} stamped."
-            )
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
-            self._status_lbl.setText("Save failed.")
-        finally:
-            self._save_btn.setEnabled(True)
+    def _on_save_failed(self, msg: str):
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._save_btn.setEnabled(True)
 
     # -----------------------------------------------------------------------
     # Drag and drop

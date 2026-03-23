@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Remove".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -18,9 +20,8 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QProgressBar,
-    QApplication,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -34,6 +35,7 @@ from PySide6.QtGui import (
 from colors import (
     BLUE,
     BLUE_HOVER,
+    EMERALD,
     GREEN,
     RED,
     RED_HOVER,
@@ -60,7 +62,41 @@ try:
 except ImportError:
     PdfReader = PdfWriter = None
 
+logger = logging.getLogger(__name__)
+
 THUMB_W = 110
+
+
+class _RemovePagesWorker(QThread):
+    finished = Signal(str, int, int)   # out_path, removed, kept
+    failed = Signal(str)
+    progress = Signal(int)
+
+    def __init__(self, pdf_path, out_path, pages_to_keep, parent=None):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._pages_to_keep = pages_to_keep
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            reader = PdfReader(self._pdf_path)
+            writer = PdfWriter()
+            total = len(self._pages_to_keep)
+            for idx, page_idx in enumerate(self._pages_to_keep):
+                writer.add_page(reader.pages[page_idx])
+                self.progress.emit(int((idx + 1) / total * 90))
+            with open(self._out_path, "wb") as f:
+                writer.write(f)
+            self.progress.emit(100)
+            removed = len(reader.pages) - total
+            self.finished.emit(self._out_path, removed, total)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 THUMB_H = 140
 GRID_COLS = 4
 THUMB_SCALE = 0.25
@@ -209,6 +245,7 @@ class RemoveTool(QWidget):
         self._total_pages = 0
         self._marked: set[int] = set()
         self._cells: list[_PageCell] = []
+        self._worker = None
         self._thumb_timer = QTimer(self)
         self._thumb_timer.setSingleShot(True)
         self._thumb_timer.timeout.connect(self._render_thumbs_deferred)
@@ -286,7 +323,7 @@ class RemoveTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -474,6 +511,7 @@ class RemoveTool(QWidget):
         try:
             self._doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -628,35 +666,33 @@ class RemoveTool(QWidget):
         self._status_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; border: none; background: transparent;"
         )
-        QApplication.processEvents()
 
-        try:
-            reader = PdfReader(self._pdf_path)
-            writer = PdfWriter()
-            pages_to_keep = sorted(set(range(self._total_pages)) - self._marked)
-            for idx, page_idx in enumerate(pages_to_keep):
-                writer.add_page(reader.pages[page_idx])
-                self._progress.setValue(int((idx + 1) / len(pages_to_keep) * 90))
-                QApplication.processEvents()
+        pages_to_keep = sorted(set(range(self._total_pages)) - self._marked)
+        self._worker = _RemovePagesWorker(self._pdf_path, out_path, pages_to_keep)
+        self._worker.progress.connect(self._progress.setValue)
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-            with open(out_path, "wb") as f:
-                writer.write(f)
+    def _on_save_done(self, out_path: str, removed: int, kept: int):
+        self._status_lbl.setText(
+            f"Saved — removed {removed} page{'s' if removed != 1 else ''}, "
+            f"{kept} remain."
+        )
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        remaining = self._total_pages - len(self._marked)
+        self._remove_btn.setEnabled(len(self._marked) > 0 and remaining > 0)
+        self._progress.hide()
 
-            self._progress.setValue(100)
-            removed = len(self._marked)
-            self._status_lbl.setText(
-                f"Saved — removed {removed} page{'s' if removed != 1 else ''}, "
-                f"{len(pages_to_keep)} remain."
-            )
-            self._status_lbl.setStyleSheet(
-                f"color: {GREEN}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
-            self._status_lbl.setText("Save failed.")
-        finally:
-            self._remove_btn.setEnabled(len(self._marked) > 0 and remaining > 0)
-            self._progress.hide()
+    def _on_save_failed(self, msg: str):
+        logger.error("save failed: %s", msg)
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        remaining = self._total_pages - len(self._marked)
+        self._remove_btn.setEnabled(len(self._marked) > 0 and remaining > 0)
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

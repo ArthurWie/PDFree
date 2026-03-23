@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Extract Images".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -18,10 +20,9 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QProgressBar,
-    QApplication,
     QComboBox,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QPixmap,
     QDragEnterEvent,
@@ -42,13 +43,15 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 FORMAT_OPTIONS = ["PNG", "JPEG"]
 GRID_COLS = 4
@@ -111,6 +114,49 @@ def _combo(options: list) -> QComboBox:
 # ===========================================================================
 
 
+class _ExtractImagesWorker(QThread):
+    finished = Signal(str, int)  # out_dir, count
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_dir, images, fmt, ext):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._out_dir = out_dir
+        self._images = images
+        self._fmt = fmt
+        self._ext = ext
+
+    def run(self):
+        try:
+            out_dir = self._out_dir
+            out_dir.mkdir(parents=True, exist_ok=True)
+            assert_file_writable(out_dir / "_probe")
+            doc = fitz.open(self._pdf_path)
+            try:
+                for i, (page_idx, xref, w, h) in enumerate(self._images):
+                    img_data = doc.extract_image(xref)
+                    raw = img_data["image"]
+                    out_file = out_dir / f"image_{i + 1:04d}_p{page_idx + 1}.{self._ext}"
+                    src_ext = img_data.get("ext", "")
+                    if self._ext == src_ext or (
+                        self._ext == "jpg" and src_ext in ("jpg", "jpeg")
+                    ):
+                        out_file.write_bytes(raw)
+                    else:
+                        pix = fitz.Pixmap(raw)
+                        if pix.alpha:
+                            pix = fitz.Pixmap(fitz.csRGB, pix)
+                        pix.save(str(out_file))
+            finally:
+                doc.close()
+            self.finished.emit(str(out_dir), len(self._images))
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+
+
 class ExtractImagesTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -126,6 +172,7 @@ class ExtractImagesTool(QWidget):
 
         self._pdf_path = ""
         self._images: list = []  # list of (page_idx, xref, w, h)
+        self._worker = None
         self._thumb_timer = QTimer(self)
         self._thumb_timer.setSingleShot(True)
         self._thumb_timer.timeout.connect(self._render_thumbs_deferred)
@@ -173,7 +220,7 @@ class ExtractImagesTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("image", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Extract Images")
@@ -192,7 +239,7 @@ class ExtractImagesTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -332,6 +379,7 @@ class ExtractImagesTool(QWidget):
         try:
             doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -469,45 +517,29 @@ class ExtractImagesTool(QWidget):
         self._status_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; border: none; background: transparent;"
         )
-        QApplication.processEvents()
 
-        try:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            doc = fitz.open(self._pdf_path)
-            try:
-                for i, (page_idx, xref, w, h) in enumerate(self._images):
-                    img_data = doc.extract_image(xref)
-                    raw = img_data["image"]
-                    out_file = out_dir / f"image_{i + 1:04d}_p{page_idx + 1}.{ext}"
-                    src_ext = img_data.get("ext", "")
-                    if ext == src_ext or (ext == "jpg" and src_ext in ("jpg", "jpeg")):
-                        out_file.write_bytes(raw)
-                    else:
-                        pix = fitz.Pixmap(raw)
-                        if pix.alpha:
-                            pix = fitz.Pixmap(fitz.csRGB, pix)
-                        pix.save(str(out_file))
-                    self._progress.setValue(int((i + 1) / len(self._images) * 100))
-                    QApplication.processEvents()
-            finally:
-                doc.close()
+        self._worker = _ExtractImagesWorker(
+            self._pdf_path, out_dir, list(self._images), fmt, ext
+        )
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-            n = len(self._images)
-            self._status_lbl.setText(
-                f"Extracted {n} image{'s' if n != 1 else ''} to {out_dir.name}."
-            )
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Extraction failed", str(exc))
-            self._status_lbl.setText("Extraction failed.")
-            self._status_lbl.setStyleSheet(
-                "color: red; font: 12px; border: none; background: transparent;"
-            )
-        finally:
-            self._extract_btn.setEnabled(bool(self._images))
-            self._progress.hide()
+    def _on_save_done(self, out_dir: str, n: int):
+        self._status_lbl.setText(
+            f"Extracted {n} image{'s' if n != 1 else ''} to {Path(out_dir).name}."
+        )
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._extract_btn.setEnabled(bool(self._images))
+        self._progress.hide()
+
+    def _on_save_failed(self, msg: str):
+        QMessageBox.critical(self, "Extraction failed", msg)
+        self._status_lbl.setText("Extraction failed.")
+        self._extract_btn.setEnabled(bool(self._images))
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

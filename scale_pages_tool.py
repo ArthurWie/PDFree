@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Scale Pages".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -18,11 +20,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QApplication,
     QComboBox,
     QCheckBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
@@ -42,7 +43,7 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
@@ -50,7 +51,80 @@ try:
 except ImportError:
     fitz = None
 
+logger = logging.getLogger(__name__)
+
 MM_TO_PT = 2.83465
+
+
+class _ScalePagesWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+    progress = Signal(int)
+
+    def __init__(
+        self,
+        pdf_path,
+        out_path,
+        target_w,
+        target_h,
+        scale_content,
+        preserve_aspect,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._target_w = target_w
+        self._target_h = target_h
+        self._scale_content = scale_content
+        self._preserve_aspect = preserve_aspect
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            src = fitz.open(self._pdf_path)
+            out = fitz.open()
+            try:
+                for i in range(src.page_count):
+                    src_page = src[i]
+                    new_page = out.new_page(
+                        width=self._target_w, height=self._target_h
+                    )
+                    if self._scale_content:
+                        if self._preserve_aspect:
+                            src_r = src_page.rect
+                            scale = min(
+                                self._target_w / src_r.width,
+                                self._target_h / src_r.height,
+                            )
+                            scaled_w = src_r.width * scale
+                            scaled_h = src_r.height * scale
+                            x0 = (self._target_w - scaled_w) / 2
+                            y0 = (self._target_h - scaled_h) / 2
+                            target_rect = fitz.Rect(
+                                x0, y0, x0 + scaled_w, y0 + scaled_h
+                            )
+                        else:
+                            target_rect = fitz.Rect(
+                                0, 0, self._target_w, self._target_h
+                            )
+                        new_page.show_pdf_page(target_rect, src, i)
+                    else:
+                        new_page.show_pdf_page(
+                            fitz.Rect(0, 0, self._target_w, self._target_h), src, i
+                        )
+                    self.progress.emit(int((i + 1) / src.page_count * 90))
+                out.save(self._out_path, garbage=4, deflate=True)
+                self.progress.emit(100)
+            finally:
+                src.close()
+                out.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 PAGE_SIZES = {
     "A4 Portrait (210×297 mm)": (595.28, 841.89),
@@ -134,6 +208,7 @@ class ScalePagesTool(QWidget):
 
         self._pdf_path = ""
         self._original_size = 0
+        self._worker = None
 
         self._build_ui()
         self.setAcceptDrops(True)
@@ -177,7 +252,7 @@ class ScalePagesTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("maximize", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Scale Pages")
@@ -196,7 +271,7 @@ class ScalePagesTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -413,6 +488,7 @@ class ScalePagesTool(QWidget):
             h_pt = first_page.rect.height
             doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -508,6 +584,18 @@ class ScalePagesTool(QWidget):
         if not out_path:
             return
 
+        if self._size_combo.currentText() == "Custom":
+            try:
+                w_mm = float(self._custom_w.text() or "210")
+                h_mm = float(self._custom_h.text() or "297")
+            except ValueError as exc:
+                QMessageBox.critical(self, "Invalid dimensions", str(exc))
+                return
+            target_w = w_mm * MM_TO_PT
+            target_h = h_mm * MM_TO_PT
+        else:
+            target_w, target_h = PAGE_SIZES[self._size_combo.currentText()]
+
         self._progress.setValue(0)
         self._progress.show()
         self._scale_btn.setEnabled(False)
@@ -515,61 +603,37 @@ class ScalePagesTool(QWidget):
         self._status_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; border: none; background: transparent;"
         )
-        QApplication.processEvents()
 
-        try:
-            src = fitz.open(self._pdf_path)
-            out = fitz.open()
-            try:
-                if self._size_combo.currentText() == "Custom":
-                    w_mm = float(self._custom_w.text() or "210")
-                    h_mm = float(self._custom_h.text() or "297")
-                    target_w = w_mm * MM_TO_PT
-                    target_h = h_mm * MM_TO_PT
-                else:
-                    target_w, target_h = PAGE_SIZES[self._size_combo.currentText()]
+        self._worker = _ScalePagesWorker(
+            self._pdf_path,
+            out_path,
+            target_w,
+            target_h,
+            self._chk_scale.isChecked(),
+            self._chk_aspect.isChecked(),
+        )
+        self._worker.progress.connect(self._progress.setValue)
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-                for i in range(src.page_count):
-                    src_page = src[i]
-                    new_page = out.new_page(width=target_w, height=target_h)
+    def _on_save_done(self, _out_path: str):
+        self._status_lbl.setText("Done.")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._scale_btn.setEnabled(True)
+        self._progress.hide()
 
-                    if self._chk_scale.isChecked():
-                        if self._chk_aspect.isChecked():
-                            src_r = src_page.rect
-                            scale = min(target_w / src_r.width, target_h / src_r.height)
-                            scaled_w = src_r.width * scale
-                            scaled_h = src_r.height * scale
-                            x0 = (target_w - scaled_w) / 2
-                            y0 = (target_h - scaled_h) / 2
-                            target_rect = fitz.Rect(x0, y0, x0 + scaled_w, y0 + scaled_h)
-                        else:
-                            target_rect = fitz.Rect(0, 0, target_w, target_h)
-                        new_page.show_pdf_page(target_rect, src, i)
-                    else:
-                        new_page.show_pdf_page(fitz.Rect(0, 0, target_w, target_h), src, i)
-
-                    self._progress.setValue(int((i + 1) / src.page_count * 90))
-                    QApplication.processEvents()
-
-                out.save(out_path, garbage=4, deflate=True)
-                self._progress.setValue(100)
-            finally:
-                src.close()
-                out.close()
-
-            self._status_lbl.setText("Done.")
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Scaling failed", str(exc))
-            self._status_lbl.setText("Scaling failed.")
-            self._status_lbl.setStyleSheet(
-                "color: red; font: 12px; border: none; background: transparent;"
-            )
-        finally:
-            self._scale_btn.setEnabled(True)
-            self._progress.hide()
+    def _on_save_failed(self, msg: str):
+        logger.error("scaling failed: %s", msg)
+        QMessageBox.critical(self, "Scaling failed", msg)
+        self._status_lbl.setText("Scaling failed.")
+        self._status_lbl.setStyleSheet(
+            "color: red; font: 12px; border: none; background: transparent;"
+        )
+        self._scale_btn.setEnabled(True)
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

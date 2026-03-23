@@ -3,7 +3,9 @@
 PySide6. Requires ocrmypdf (and Tesseract). Loaded by main.py.
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -41,26 +43,29 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
     import ocrmypdf as _ocrmypdf
+
     _HAS_OCR = True
 except ImportError:
     _HAS_OCR = False
 
+logger = logging.getLogger(__name__)
+
 LANGUAGES = [
-    ("English",    "eng"),
-    ("French",     "fra"),
-    ("German",     "deu"),
-    ("Spanish",    "spa"),
+    ("English", "eng"),
+    ("French", "fra"),
+    ("German", "deu"),
+    ("Spanish", "spa"),
     ("Portuguese", "por"),
-    ("Italian",    "ita"),
-    ("Dutch",      "nld"),
+    ("Italian", "ita"),
+    ("Dutch", "nld"),
     ("Chinese (Simplified)", "chi_sim"),
-    ("Japanese",   "jpn"),
-    ("Arabic",     "ara"),
+    ("Japanese", "jpn"),
+    ("Arabic", "ara"),
 ]
 
 
@@ -134,7 +139,12 @@ class _OCRWorker(QThread):
         self._skip_text = skip_text
 
     def run(self):
+        import worker_semaphore
+
+        worker_semaphore.acquire()
         try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
             kwargs = dict(
                 input_file=self._pdf_path,
                 output_file=self._out_path,
@@ -146,8 +156,13 @@ class _OCRWorker(QThread):
             )
             _ocrmypdf.ocr(**kwargs)
             self.finished.emit(self._out_path)
-        except Exception as exc:
+        except PermissionError as exc:
             self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+        finally:
+            worker_semaphore.release()
 
 
 # ===========================================================================
@@ -199,7 +214,7 @@ class OCRTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("scan-line", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("OCR PDF")
         title_lbl.setStyleSheet(
@@ -244,7 +259,7 @@ class OCRTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
@@ -447,18 +462,24 @@ class OCRTool(QWidget):
         if not self._pdf_path:
             return
         if not _HAS_OCR:
-            QMessageBox.warning(self, "Missing dependency",
-                                "Install ocrmypdf:\n  pip install ocrmypdf\n\n"
-                                "Also install Tesseract OCR on your system.")
+            QMessageBox.warning(
+                self,
+                "Missing dependency",
+                "Install ocrmypdf:\n  pip install ocrmypdf\n\n"
+                "Also install Tesseract OCR on your system.",
+            )
             return
 
-        out_name = self._out_entry.text().strip() or f"{Path(self._pdf_path).stem}_ocr.pdf"
+        out_name = (
+            self._out_entry.text().strip() or f"{Path(self._pdf_path).stem}_ocr.pdf"
+        )
         if not out_name.lower().endswith(".pdf"):
             out_name += ".pdf"
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save OCR PDF",
+            self,
+            "Save OCR PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )

@@ -3,13 +3,12 @@
 Load multiple PDFs, drag to select rectangular regions on any page,
 and collect them into a growing excerpt document. Save at any time.
 Uses native PDF crop (show_pdf_page with clip) to preserve text and links.
-
-PySide6 port – no tkinter/customtkinter dependencies.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 from typing import Any, cast
 
@@ -57,13 +56,16 @@ from colors import (
     RED,
     SEL_BLUE,
     SIDEBAR_BG,
+    BLUE_MED,
 )
-from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
+from utils import _fitz_pix_to_qpixmap, _WheelToHScroll, assert_file_writable, backup_original
 
 try:
     import fitz  # pymupdf
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +807,7 @@ class ExcerptTool(QWidget):
                 )
                 added += 1
             except Exception as e:
+                logger.exception("could not open pdf")
                 QMessageBox.critical(
                     self, "Error", f"Could not open {Path(p).name}:\n{e}"
                 )
@@ -885,7 +888,7 @@ class ExcerptTool(QWidget):
             card.setFixedHeight(32)
             card.setStyleSheet(
                 f"QFrame {{ background: {BLUE_DIM if is_active else WHITE}; "
-                f"border: 1px solid {'#BFDBFE' if is_active else G200}; "
+                f"border: 1px solid {BLUE_MED if is_active else G200}; "
                 f"border-radius: 8px; }}"
             )
             card.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -1303,6 +1306,7 @@ class ExcerptTool(QWidget):
             finally:
                 src_doc.close()
         except (FileNotFoundError, RuntimeError) as e:
+            logger.exception("capture failed")
             QMessageBox.critical(
                 self, "Capture Error", f"Failed to capture region:\n{e}"
             )
@@ -1494,6 +1498,7 @@ class ExcerptTool(QWidget):
         if not path:
             return
         try:
+            assert_file_writable(Path(path))
             self._out_doc.save(path)
             QMessageBox.information(
                 self,
@@ -1501,7 +1506,11 @@ class ExcerptTool(QWidget):
                 f"Excerpt PDF saved:\n{path}\n({self._out_doc.page_count} pages)",
             )
             self._status_lbl.setText("Saved.")
+        except PermissionError as e:
+            logger.exception("save failed")
+            QMessageBox.critical(self, "Error", f"Could not save:\n{e}")
         except (OSError, RuntimeError) as e:
+            logger.exception("save failed")
             QMessageBox.critical(self, "Error", f"Could not save:\n{e}")
 
     # ==========================================================================

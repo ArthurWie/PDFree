@@ -3,7 +3,9 @@
 PySide6. Requires weasyprint. Loaded by main.py.
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -43,7 +45,7 @@ from colors import (
     WHITE,
     EMERALD,
     RED,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
@@ -51,6 +53,8 @@ try:
     _HAS_WEASYPRINT = True
 except ImportError:
     _HAS_WEASYPRINT = False
+
+logger = logging.getLogger(__name__)
 
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None):
@@ -106,6 +110,7 @@ class _ConvertWorker(QThread):
 
     def run(self):
         try:
+            assert_file_writable(Path(self._out_path))
             if self._mode == "file":
                 _WeasyHTML(filename=self._source).write_pdf(self._out_path)
             elif self._mode == "url":
@@ -113,7 +118,10 @@ class _ConvertWorker(QThread):
             else:  # paste
                 _WeasyHTML(string=self._source).write_pdf(self._out_path)
             self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
         except Exception as exc:
+            logger.exception("worker failed")
             self.failed.emit(str(exc))
 
 
@@ -165,7 +173,7 @@ class HTMLToPDFTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("file-text", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("HTML to PDF")
         title_lbl.setStyleSheet(
@@ -233,7 +241,7 @@ class HTMLToPDFTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)

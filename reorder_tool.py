@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Reorder Pages".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -17,9 +19,8 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QFileDialog,
     QMessageBox,
-    QApplication,
 )
-from PySide6.QtCore import Qt, QTimer, QMimeData, QPoint
+from PySide6.QtCore import Qt, QThread, QTimer, QMimeData, QPoint, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -45,7 +46,7 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -59,7 +60,36 @@ try:
 except ImportError:
     PdfReader = PdfWriter = None
 
+logger = logging.getLogger(__name__)
+
 THUMB_W = 110
+
+
+class _ReorderWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, order, parent=None):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._order = order
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            reader = PdfReader(self._pdf_path)
+            writer = PdfWriter()
+            for orig_idx in self._order:
+                writer.add_page(reader.pages[orig_idx])
+            with open(self._out_path, "wb") as f:
+                writer.write(f)
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 THUMB_H = 140
 GRID_COLS = 4
 THUMB_SCALE = 0.25
@@ -215,9 +245,10 @@ class ReorderTool(QWidget):
         self._pdf_path = ""
         self._doc = None
         self._total_pages = 0
-        self._order: list[int] = []          # current position → original page index
+        self._order: list[int] = []
         self._cells: list[_PageCell] = []
-        self._thumb_cache: dict[int, QPixmap] = {}  # original_idx → pixmap
+        self._thumb_cache: dict[int, QPixmap] = {}
+        self._worker = None
         self._thumb_timer = QTimer(self)
         self._thumb_timer.setSingleShot(True)
         self._thumb_timer.timeout.connect(self._render_thumbs_deferred)
@@ -261,7 +292,7 @@ class ReorderTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("layers", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("Reorder Pages")
         title_lbl.setStyleSheet(
@@ -278,7 +309,7 @@ class ReorderTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
@@ -462,6 +493,7 @@ class ReorderTool(QWidget):
         try:
             self._doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -609,25 +641,25 @@ class ReorderTool(QWidget):
 
         self._save_btn.setEnabled(False)
         self._status_lbl.setText("Saving...")
-        QApplication.processEvents()
 
-        try:
-            reader = PdfReader(self._pdf_path)
-            writer = PdfWriter()
-            for orig_idx in self._order:
-                writer.add_page(reader.pages[orig_idx])
-            with open(out_path, "wb") as f:
-                writer.write(f)
-            self._status_lbl.setText(f"Saved: {Path(out_path).name}")
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-            self._modified = False
-        except Exception as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
-            self._status_lbl.setText("Save failed.")
-        finally:
-            self._save_btn.setEnabled(True)
+        self._worker = _ReorderWorker(self._pdf_path, out_path, list(self._order))
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
+
+    def _on_save_done(self, out_path: str):
+        self._status_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._modified = False
+        self._save_btn.setEnabled(True)
+
+    def _on_save_failed(self, msg: str):
+        logger.error("save failed: %s", msg)
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._save_btn.setEnabled(True)
 
     # -----------------------------------------------------------------------
     # Drag and drop (file drop onto tool)

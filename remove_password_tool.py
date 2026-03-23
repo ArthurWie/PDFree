@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Remove Password".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -17,9 +19,8 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QSizePolicy,
-    QApplication,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
@@ -41,13 +42,48 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
+
+
+class _RemovePasswordWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, password, parent=None):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._password = password
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            doc = fitz.open(self._pdf_path)
+            if doc.needs_pass:
+                if not doc.authenticate(self._password):
+                    self.failed.emit("Wrong password — could not authenticate.")
+                    return
+            doc.save(
+                self._out_path,
+                encryption=fitz.PDF_ENCRYPT_NONE,
+                garbage=3,
+                deflate=True,
+            )
+            doc.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPushButton:
@@ -98,6 +134,7 @@ class RemovePasswordTool(QWidget):
 
         self._pdf_path = ""
         self._needs_pass = False
+        self._worker = None
 
         self._build_ui()
         self.setAcceptDrops(True)
@@ -141,7 +178,7 @@ class RemovePasswordTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("unlock", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Remove Password")
@@ -334,7 +371,7 @@ class RemovePasswordTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(56)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         h = QHBoxLayout(dz)
@@ -370,6 +407,7 @@ class RemovePasswordTool(QWidget):
             needs_pass = bool(doc.needs_pass)
             doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -457,27 +495,25 @@ class RemovePasswordTool(QWidget):
 
         self._save_btn.setEnabled(False)
         self._result_lbl.setText("Saving...")
-        QApplication.processEvents()
 
-        try:
-            doc = fitz.open(self._pdf_path)
-            if doc.needs_pass:
-                pw = self._pw_field.text()
-                if not doc.authenticate(pw):
-                    QMessageBox.warning(self, "Wrong password", "Could not authenticate.")
-                    return
-            doc.save(out_path, encryption=fitz.PDF_ENCRYPT_NONE, garbage=3, deflate=True)
-            doc.close()
+        pw = self._pw_field.text() if self._needs_pass else ""
+        self._worker = _RemovePasswordWorker(self._pdf_path, out_path, pw)
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-            self._result_lbl.setText(f"Saved: {Path(out_path).name}")
-            self._result_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
-            self._result_lbl.setText("Save failed.")
-        finally:
-            self._save_btn.setEnabled(True)
+    def _on_save_done(self, out_path: str):
+        self._result_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._result_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._save_btn.setEnabled(True)
+
+    def _on_save_failed(self, msg: str):
+        logger.error("save failed: %s", msg)
+        QMessageBox.critical(self, "Save failed", msg)
+        self._result_lbl.setText("Save failed.")
+        self._save_btn.setEnabled(True)
 
     # -----------------------------------------------------------------------
     # Drag and drop

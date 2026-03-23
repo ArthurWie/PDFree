@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import datetime
+import logging
 import os
 import re
 import subprocess
@@ -31,9 +32,8 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QProgressBar,
     QSizePolicy,
-    QApplication,
 )
-from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtCore import Qt, QThread, QTimer, QSize, Signal
 from PySide6.QtGui import QPainter, QColor, QPixmap, QPen, QFont, QIcon
 from icons import svg_pixmap
 from colors import (
@@ -50,8 +50,11 @@ from colors import (
     GREEN,
     RED,
     THUMB_BG,
+    EMERALD,
+    AMBER_WARN,
 )
-from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
+from pathlib import Path
+from utils import _fitz_pix_to_qpixmap, _WheelToHScroll, assert_file_writable
 
 # ---------------------------------------------------------------------------
 # Optional dependency check
@@ -69,6 +72,438 @@ try:
     _HAS_PLUMBER = True
 except ImportError:
     _HAS_PLUMBER = False
+
+logger = logging.getLogger(__name__)
+
+
+class _ExtractionWorker(QThread):
+    """Run the CSV extraction pipeline off the main thread."""
+
+    progress = Signal(int, str)  # percent, status text
+    finished = Signal(str, str)  # report_text, output_dir
+    failed = Signal(str)  # error message
+
+    def __init__(
+        self,
+        pdf_path,
+        password,
+        pages,
+        base_name,
+        output_dir,
+        method,
+        settings,
+        fallback_settings,
+        meta_mode,
+        image_only_policy,
+        cfg,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._password = password
+        self._pages = pages
+        self._base_name = base_name
+        self._output_dir = output_dir
+        self._method = method
+        self._settings = settings
+        self._fallback_settings = fallback_settings
+        self._meta_mode = meta_mode
+        self._image_only_policy = image_only_policy
+        self._cfg = cfg
+
+    # ------------------------------------------------------------------
+    # Helpers — use self._cfg instead of _get() to avoid touching Qt widgets
+    # ------------------------------------------------------------------
+
+    def _cfg_get(self, key):
+        return self._cfg.get(key, "")
+
+    @staticmethod
+    def _page_is_image_only(doc, pg_idx):
+        raw = doc[pg_idx].get_text()
+        text = raw.strip() if isinstance(raw, str) else ""
+        return len(text) < 5
+
+    def _resolve_output_path(self, fpath):
+        if not os.path.exists(fpath):
+            return fpath
+        policy = self._cfg_get("overwrite")
+        if policy == "Overwrite":
+            return fpath
+        if policy == "Skip":
+            return None
+        base, ext = os.path.splitext(fpath)
+        counter = 1
+        while True:
+            candidate = f"{base}_{counter}{ext}"
+            if not os.path.exists(candidate):
+                return candidate
+            counter += 1
+
+    def _process_table(self, raw):
+        lb_mode = self._cfg_get("linebreak")
+        custom_lb = self._cfg_get("custom_lb")
+        merge_h_mode = self._cfg_get("merged")
+        merge_v_mode = self._cfg_get("vert_merge")
+        empty_marker = self._cfg_get("empty_marker")
+        strip_ws = self._cfg_get("strip_ws") == "Enabled"
+        uni_norm = self._cfg_get("unicode_norm")
+        type_detect = self._cfg_get("type_detect")
+
+        rows = []
+        for raw_row in raw:
+            if raw_row is None:
+                continue
+            row = []
+            for cell in raw_row:
+                if cell is None:
+                    if merge_h_mode == "Duplicate across columns" and row:
+                        row.append(row[-1])
+                    elif empty_marker:
+                        row.append(empty_marker)
+                    else:
+                        row.append("")
+                    continue
+                text = str(cell)
+                if lb_mode == "Replace with space":
+                    text = text.replace("\n", " ").replace("\r", " ")
+                elif lb_mode == "Replace with custom":
+                    text = text.replace("\n", custom_lb).replace("\r", "")
+                elif lb_mode == "Remove entirely":
+                    text = text.replace("\n", "").replace("\r", "")
+                if strip_ws:
+                    text = text.strip()
+                text = (
+                    text.replace("\u2018", "'")
+                    .replace("\u2019", "'")
+                    .replace("\u201c", '"')
+                    .replace("\u201d", '"')
+                )
+                text = (
+                    text.replace("\ufb01", "fi")
+                    .replace("\ufb02", "fl")
+                    .replace("\ufb00", "ff")
+                    .replace("\ufb03", "ffi")
+                    .replace("\ufb04", "ffl")
+                )
+                text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+                text = re.sub(r"  +", " ", text)
+                if uni_norm == "NFC (recommended)":
+                    text = unicodedata.normalize("NFC", text)
+                elif uni_norm == "NFKC (compatibility)":
+                    text = unicodedata.normalize("NFKC", text)
+                row.append(text)
+            rows.append(row)
+
+        if merge_v_mode == "Duplicate down rows" and rows:
+            n_cols = max(len(r) for r in rows)
+            last_vals = [""] * n_cols
+            for row in rows:
+                for ci in range(len(row)):
+                    if row[ci] == "" or row[ci] == empty_marker:
+                        if last_vals[ci]:
+                            row[ci] = last_vals[ci]
+                    else:
+                        last_vals[ci] = row[ci]
+
+        if type_detect != "Disabled":
+            do_numbers = "Numbers" in type_detect
+            do_dates = "Dates" in type_detect
+            rows = [
+                [PDFtoCSVTool._convert_cell_type(c, do_numbers, do_dates) for c in row]
+                for row in rows
+            ]
+        return rows
+
+    def _detect_header(self, rows):
+        mode = self._cfg_get("header")
+        if not rows:
+            return False, [], []
+        if mode == "No headers":
+            return False, [], rows
+        if mode == "First row is header":
+            return True, rows[0], rows[1:]
+        first = rows[0]
+        if not first:
+            return False, [], rows
+        score = 0
+        if all(c != "" for c in first):
+            score += 1
+        if not any(re.match(r"^[\d.,%-]+$", c) for c in first if c):
+            score += 1
+        if len(set(c for c in first if c)) == len([c for c in first if c]):
+            score += 1
+        if score >= 2:
+            return True, first, rows[1:]
+        return False, [], rows
+
+    def _passes_size_filter(self, rows):
+        try:
+            min_rows = max(1, int(self._cfg_get("min_rows")))
+        except ValueError:
+            min_rows = 1
+        try:
+            min_cols = max(1, int(self._cfg_get("min_cols")))
+        except ValueError:
+            min_cols = 1
+        if len(rows) < min_rows:
+            return False
+        if rows and max(len(r) for r in rows) < min_cols:
+            return False
+        return True
+
+    def _add_source_metadata(self, rows, page_num, table_num, is_header):
+        if self._meta_mode == "None":
+            return rows
+        result = []
+        for i, row in enumerate(rows):
+            is_hdr_row = is_header and i == 0
+            if self._meta_mode == "Page number":
+                prefix = ["Source page"] if is_hdr_row else [str(page_num)]
+            elif self._meta_mode == "Table number":
+                prefix = ["Source table"] if is_hdr_row else [str(table_num)]
+            else:
+                prefix = (
+                    ["Source page", "Source table"]
+                    if is_hdr_row
+                    else [str(page_num), str(table_num)]
+                )
+            result.append(prefix + list(row))
+        return result
+
+    def _write_csv(self, rows, path):
+        enc_name = self._cfg_get("encoding")
+        encoding = ENCODING_MAP.get(enc_name, "utf-8-sig")
+        delim = DELIMITER_MAP.get(self._cfg_get("delimiter"), ",")
+        line_ending = LINE_ENDING_MAP.get(self._cfg_get("line_ending"), os.linesep)
+        with open(path, "w", newline="", encoding=encoding, errors="replace") as f:
+            writer = csv.writer(
+                f,
+                delimiter=delim,
+                quoting=csv.QUOTE_MINIMAL,
+                lineterminator=line_ending,
+            )
+            writer.writerows(rows)
+
+    # ------------------------------------------------------------------
+    # Main pipeline
+    # ------------------------------------------------------------------
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._output_dir) / "_probe")
+            self._do_extract()
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+    def _do_extract(self):
+        doc = fitz.open(self._pdf_path)
+        pldoc = pdfplumber.open(self._pdf_path)
+        if self._password:
+            doc.authenticate(self._password)
+
+        try:
+            report_lines = ["=== Extraction Complete ===\n"]
+            report_lines.append(f"Input:  {os.path.basename(self._pdf_path)}")
+            report_lines.append(f"Output: {self._output_dir}")
+            report_lines.append(
+                f"Pages processed: {len(self._pages)}  "
+                f"(pages {self._pages[0] + 1}–{self._pages[-1] + 1})\n"
+            )
+
+            all_table_rows = []
+            total_tables = 0
+            total_rows = 0
+            skipped_files = 0
+            warnings = []
+            output_files = []
+            page_table_data = []
+
+            for pg_idx in self._pages:
+                self.progress.emit(0, f"Detecting tables on page {pg_idx + 1}…")
+
+                if self._page_is_image_only(doc, pg_idx):
+                    if self._image_only_policy == "Fail entirely":
+                        self.failed.emit(
+                            f"Page {pg_idx + 1} contains only scanned images and "
+                            "cannot be extracted.\n\nChange 'Image-only pages' to "
+                            "'Skip with warning' to continue past such pages."
+                        )
+                        return
+                    else:
+                        warnings.append(
+                            f"Page {pg_idx + 1}: image-only page — no text layer, skipped."
+                        )
+                        continue
+
+                try:
+                    pl_page = pldoc.pages[pg_idx]
+                    raw_tables = pl_page.extract_tables(self._settings)
+                except Exception as e:
+                    warnings.append(f"Page {pg_idx + 1}: extraction error — {e}")
+                    continue
+
+                if self._method == "Auto" and not raw_tables:
+                    try:
+                        raw_tables = pl_page.extract_tables(self._fallback_settings)
+                        if raw_tables:
+                            warnings.append(
+                                f"Page {pg_idx + 1}: lattice detection found no tables, "
+                                "fell back to stream mode."
+                            )
+                    except (ValueError, RuntimeError):
+                        pass
+
+                if not raw_tables:
+                    warnings.append(f"Page {pg_idx + 1}: no tables detected (skipped).")
+                    continue
+
+                for tbl_idx, raw in enumerate(raw_tables):
+                    rows = self._process_table(raw)
+                    has_hdr, hdr, data_rows = self._detect_header(rows)
+
+                    if not self._passes_size_filter(rows):
+                        warnings.append(
+                            f"Page {pg_idx + 1} table {tbl_idx + 1}: "
+                            f"too small ({len(rows)} rows × "
+                            f"{max(len(r) for r in rows) if rows else 0} cols), skipped."
+                        )
+                        continue
+
+                    final_rows = [hdr] + data_rows if has_hdr else rows
+
+                    multi_mode = self._cfg_get("multi")
+                    if (
+                        multi_mode == "Single file (concatenate)"
+                        and self._meta_mode != "None"
+                    ):
+                        final_rows = self._add_source_metadata(
+                            final_rows, pg_idx + 1, tbl_idx + 1, has_hdr
+                        )
+
+                    page_table_data.append((pg_idx, tbl_idx + 1, final_rows, has_hdr))
+
+            n_total = len(page_table_data)
+
+            for i, (pg_idx, tbl_num, final_rows, has_hdr) in enumerate(page_table_data):
+                total_tables += 1
+                n_rows = len(final_rows)
+                total_rows += n_rows
+                n_cols = max(len(r) for r in final_rows) if final_rows else 0
+                pct = int((i + 1) / max(n_total, 1) * 100)
+                self.progress.emit(
+                    pct,
+                    f"Writing table {i + 1}/{n_total} (page {pg_idx + 1}, table {tbl_num})…",
+                )
+
+                col_warn = PDFtoCSVTool._check_column_consistency(final_rows)
+                if col_warn:
+                    warnings.append(f"Page {pg_idx + 1} table {tbl_num}: {col_warn}")
+
+                multi_mode = self._cfg_get("multi")
+                if multi_mode == "Separate file per table":
+                    fname = f"{self._base_name}_page{pg_idx + 1}_table{tbl_num}.csv"
+                    fpath_raw = os.path.join(self._output_dir, fname)
+                    fpath = self._resolve_output_path(fpath_raw)
+
+                    if fpath is None:
+                        skipped_files += 1
+                        warnings.append(
+                            f"Page {pg_idx + 1} table {tbl_num}: "
+                            f"'{fname}' already exists — skipped."
+                        )
+                        continue
+
+                    fname_actual = os.path.basename(fpath)
+                    try:
+                        self._write_csv(final_rows, fpath)
+                        output_files.append(fname_actual)
+                    except Exception as e:
+                        warnings.append(
+                            f"Page {pg_idx + 1} table {tbl_num}: write error — {e}"
+                        )
+                        continue
+
+                    report_lines.append(f"Table {total_tables} — page {pg_idx + 1}")
+                    report_lines.append(
+                        f"  Dimensions: {n_rows} rows × {n_cols} columns"
+                    )
+                    if fname_actual != fname:
+                        report_lines.append(
+                            f"  Output: {fname_actual}  (renamed — original existed)"
+                        )
+                    else:
+                        report_lines.append(f"  Output: {fname_actual}\n")
+
+                else:
+                    if all_table_rows and final_rows:
+                        all_table_rows.append([])
+                    all_table_rows.extend(final_rows)
+                    report_lines.append(f"Table {total_tables} — page {pg_idx + 1}")
+                    report_lines.append(
+                        f"  Dimensions: {n_rows} rows × {n_cols} columns\n"
+                    )
+
+            multi_mode = self._cfg_get("multi")
+            if multi_mode == "Single file (concatenate)" and all_table_rows:
+                fname = f"{self._base_name}_all_tables.csv"
+                fpath_raw = os.path.join(self._output_dir, fname)
+                fpath = self._resolve_output_path(fpath_raw)
+
+                if fpath is None:
+                    skipped_files += 1
+                    warnings.append(
+                        f"'{fname}' already exists — skipped (overwrite policy)."
+                    )
+                else:
+                    fname_actual = os.path.basename(fpath)
+                    try:
+                        self._write_csv(all_table_rows, fpath)
+                        output_files.append(fname_actual)
+                        if fname_actual != fname:
+                            report_lines.append(
+                                f"\nOutput: {fname_actual}  (renamed — original existed)"
+                            )
+                        else:
+                            report_lines.append(f"\nOutput: {fname_actual}")
+                    except Exception as e:
+                        warnings.append(f"Write error for combined file: {e}")
+
+            report_lines.append("\n── Summary ──────────────────────")
+            report_lines.append(f"Tables found:    {total_tables}")
+            report_lines.append(f"Total rows:      {total_rows}")
+            report_lines.append(f"Output files:    {len(output_files)}")
+            if skipped_files:
+                report_lines.append(
+                    f"Files skipped:   {skipped_files} (already existed)"
+                )
+
+            if warnings:
+                report_lines.append("\n── Warnings ─────────────────────")
+                for w in warnings:
+                    report_lines.append(f"  \u2022 {w}")
+
+            if not output_files:
+                report_lines.append("\n\u26a0 No CSV files were created.")
+                report_lines.append("  The PDF may not contain extractable tables.")
+                report_lines.append(
+                    "  Try changing the Detection Method (Stream or Hybrid)."
+                )
+
+            self.finished.emit("\n".join(report_lines), self._output_dir)
+
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
+            try:
+                pldoc.close()
+            except Exception:
+                pass
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -181,6 +616,7 @@ class PDFtoCSVTool(QWidget):
         self._table_bboxes: list = []
         self._canvas_table_rects: list = []
         self._report_widget: Optional[QWidget] = None
+        self._worker = None
 
         # ── Settings defaults & widget registry ───────────────────────────
         self._sv_defaults = {
@@ -447,7 +883,7 @@ class PDFtoCSVTool(QWidget):
             ["Disabled", "Numbers only", "Dates only", "Numbers + Dates"],
         )
         type_warn = QLabel("  \u26a0 May alter leading zeros, zip codes, phone numbers")
-        type_warn.setStyleSheet("color: #D97706; font: 10px 'Segoe UI';")
+        type_warn.setStyleSheet(f"color: {AMBER_WARN}; font: 10px 'Segoe UI';")
         type_warn.setContentsMargins(18, 0, 18, 6)
         left.addWidget(type_warn)
 
@@ -786,6 +1222,7 @@ class PDFtoCSVTool(QWidget):
         try:
             doc = fitz.open(path)
         except Exception as e:
+            logger.exception("could not open pdf")
             QMessageBox.critical(self, "Cannot Open PDF", f"Failed to open file:\n{e}")
             return
 
@@ -828,6 +1265,7 @@ class PDFtoCSVTool(QWidget):
             else:
                 self._pldoc = pdfplumber.open(path)
         except Exception as e:
+            logger.exception("could not open pdf")
             QMessageBox.critical(
                 self, "pdfplumber Error", f"Could not open PDF with pdfplumber:\n{e}"
             )
@@ -1466,7 +1904,6 @@ class PDFtoCSVTool(QWidget):
             )
             return
 
-        # Parse page range
         try:
             pages = self._parse_page_range(self._get("range"), self._total_pages)
         except ValueError as e:
@@ -1478,225 +1915,59 @@ class PDFtoCSVTool(QWidget):
             return
 
         base_name = os.path.splitext(os.path.basename(self.pdf_path))[0]
-        multi_mode = self._get("multi")
         method = self._get("detection")
         settings = self._build_table_settings(method)
+        fallback = self._build_table_settings("Stream")
         meta_mode = self._get("source_meta")
         image_only_policy = self._get("image_only")
+        cfg = {k: self._get(k) for k in self._sv_defaults}
 
-        # Disable button during extraction
         self._extract_btn.setEnabled(False)
         self._extract_btn.setText("Extracting…")
         self._progress.setValue(0)
 
-        report_lines: list = []
-        report_lines.append("=== Extraction Complete ===\n")
-        report_lines.append(f"Input:  {os.path.basename(self.pdf_path)}")
-        report_lines.append(f"Output: {self.output_dir}")
-        report_lines.append(
-            f"Pages processed: {len(pages)}  (pages {pages[0] + 1}–{pages[-1] + 1})\n"
+        self._worker = _ExtractionWorker(
+            pdf_path=self.pdf_path,
+            password=self._password,
+            pages=pages,
+            base_name=base_name,
+            output_dir=self.output_dir,
+            method=method,
+            settings=settings,
+            fallback_settings=fallback,
+            meta_mode=meta_mode,
+            image_only_policy=image_only_policy,
+            cfg=cfg,
         )
+        self._worker.progress.connect(self._on_extraction_progress)
+        self._worker.finished.connect(self._on_extraction_done)
+        self._worker.failed.connect(self._on_extraction_failed)
+        self._worker.start()
 
-        all_table_rows: list = []  # for single-file mode
-        total_tables = 0
-        total_rows = 0
-        skipped_files = 0
-        warnings: list = []
-        output_files: list = []
+    def _on_extraction_progress(self, pct: int, text: str):
+        self._progress.setValue(pct)
+        self._status_lbl.setText(text)
 
-        # Collect all tables first to compute progress
-        page_table_data: list = []
-        # Each entry: (page_idx, table_num_on_page, final_rows, has_header)
-
-        for pg_idx in pages:
-            self._status_lbl.setText(f"Detecting tables on page {pg_idx + 1}…")
-            QApplication.processEvents()
-
-            # Image-only page check
-            if self._page_is_image_only(pg_idx):
-                if image_only_policy == "Fail entirely":
-                    QMessageBox.critical(
-                        self,
-                        "Image-Only Page",
-                        f"Page {pg_idx + 1} contains only scanned images and "
-                        "cannot be extracted.\n\nChange 'Image-only pages' to "
-                        "'Skip with warning' to continue past such pages.",
-                    )
-                    self._extract_btn.setEnabled(True)
-                    self._extract_btn.setText("Extract to CSV")
-                    return
-                else:
-                    warnings.append(
-                        f"Page {pg_idx + 1}: image-only page — no text layer, skipped."
-                    )
-                    continue
-
-            try:
-                pl_page = self._pldoc.pages[pg_idx]
-                raw_tables = pl_page.extract_tables(settings)
-            except Exception as e:
-                warnings.append(f"Page {pg_idx + 1}: extraction error — {e}")
-                continue
-
-            # Auto fallback: if lines strategy found nothing, try text
-            if method == "Auto" and not raw_tables:
-                try:
-                    fallback = self._build_table_settings("Stream")
-                    raw_tables = pl_page.extract_tables(fallback)
-                    if raw_tables:
-                        warnings.append(
-                            f"Page {pg_idx + 1}: lattice detection found no tables, "
-                            "fell back to stream mode."
-                        )
-                except (ValueError, RuntimeError):
-                    pass
-
-            if not raw_tables:
-                warnings.append(f"Page {pg_idx + 1}: no tables detected (skipped).")
-                continue
-
-            for tbl_idx, raw in enumerate(raw_tables):
-                rows = self._process_table(raw)
-                has_hdr, hdr, data_rows = self._detect_header(rows)
-
-                # Minimum size filter
-                if not self._passes_size_filter(rows):
-                    warnings.append(
-                        f"Page {pg_idx + 1} table {tbl_idx + 1}: "
-                        f"too small ({len(rows)} rows × "
-                        f"{max(len(r) for r in rows) if rows else 0} cols), skipped."
-                    )
-                    continue
-
-                if has_hdr:
-                    final_rows = [hdr] + data_rows
-                else:
-                    final_rows = rows
-
-                # Add source metadata columns (for concatenated mode)
-                if multi_mode == "Single file (concatenate)" and meta_mode != "None":
-                    final_rows = self._add_source_metadata(
-                        final_rows, pg_idx + 1, tbl_idx + 1, has_hdr
-                    )
-
-                page_table_data.append((pg_idx, tbl_idx + 1, final_rows, has_hdr))
-
-        n_total = len(page_table_data)
-
-        for i, (pg_idx, tbl_num, final_rows, has_hdr) in enumerate(page_table_data):
-            total_tables += 1
-            n_rows = len(final_rows)
-            total_rows += n_rows
-            n_cols = max(len(r) for r in final_rows) if final_rows else 0
-
-            self._progress.setValue(int((i + 1) / max(n_total, 1) * 100))
-            self._status_lbl.setText(
-                f"Writing table {i + 1}/{n_total} (page {pg_idx + 1}, table {tbl_num})…"
-            )
-            QApplication.processEvents()
-
-            # Column consistency check
-            col_warn = self._check_column_consistency(final_rows)
-            if col_warn:
-                warnings.append(f"Page {pg_idx + 1} table {tbl_num}: {col_warn}")
-
-            if multi_mode == "Separate file per table":
-                fname = f"{base_name}_page{pg_idx + 1}_table{tbl_num}.csv"
-                fpath_raw = os.path.join(self.output_dir, fname)
-                fpath = self._resolve_output_path(fpath_raw)
-
-                if fpath is None:
-                    # Skipped due to overwrite policy
-                    skipped_files += 1
-                    warnings.append(
-                        f"Page {pg_idx + 1} table {tbl_num}: "
-                        f"'{fname}' already exists — skipped."
-                    )
-                    continue
-
-                fname_actual = os.path.basename(fpath)
-                try:
-                    self._write_csv(final_rows, fpath)
-                    output_files.append(fname_actual)
-                except Exception as e:
-                    warnings.append(
-                        f"Page {pg_idx + 1} table {tbl_num}: write error — {e}"
-                    )
-                    continue
-
-                report_lines.append(f"Table {total_tables} — page {pg_idx + 1}")
-                report_lines.append(f"  Dimensions: {n_rows} rows × {n_cols} columns")
-                if fname_actual != fname:
-                    report_lines.append(
-                        f"  Output: {fname_actual}  (renamed — original existed)"
-                    )
-                else:
-                    report_lines.append(f"  Output: {fname_actual}\n")
-
-            else:  # single file — collect rows
-                if all_table_rows and final_rows:
-                    all_table_rows.append([])  # blank separator row
-                all_table_rows.extend(final_rows)
-
-                report_lines.append(f"Table {total_tables} — page {pg_idx + 1}")
-                report_lines.append(f"  Dimensions: {n_rows} rows × {n_cols} columns\n")
-
-        # Write combined file if single-file mode
-        if multi_mode == "Single file (concatenate)" and all_table_rows:
-            fname = f"{base_name}_all_tables.csv"
-            fpath_raw = os.path.join(self.output_dir, fname)
-            fpath = self._resolve_output_path(fpath_raw)
-
-            if fpath is None:
-                skipped_files += 1
-                warnings.append(
-                    f"'{fname}' already exists — skipped (overwrite policy)."
-                )
-            else:
-                fname_actual = os.path.basename(fpath)
-                try:
-                    self._write_csv(all_table_rows, fpath)
-                    output_files.append(fname_actual)
-                    if fname_actual != fname:
-                        report_lines.append(
-                            f"\nOutput: {fname_actual}  (renamed — original existed)"
-                        )
-                    else:
-                        report_lines.append(f"\nOutput: {fname_actual}")
-                except Exception as e:
-                    warnings.append(f"Write error for combined file: {e}")
-
-        # Summary
-        report_lines.append("\n── Summary ──────────────────────")
-        report_lines.append(f"Tables found:    {total_tables}")
-        report_lines.append(f"Total rows:      {total_rows}")
-        report_lines.append(f"Output files:    {len(output_files)}")
-        if skipped_files:
-            report_lines.append(f"Files skipped:   {skipped_files} (already existed)")
-
-        if warnings:
-            report_lines.append("\n── Warnings ─────────────────────")
-            for w in warnings:
-                report_lines.append(f"  \u2022 {w}")
-
-        if not output_files:
-            report_lines.append("\n\u26a0 No CSV files were created.")
-            report_lines.append("  The PDF may not contain extractable tables.")
-            report_lines.append(
-                "  Try changing the Detection Method (Stream or Hybrid)."
-            )
-
+    def _on_extraction_done(self, report_text: str, output_dir: str):
         self._extract_btn.setEnabled(True)
         self._extract_btn.setText("Extract to CSV")
         self._progress.setValue(100)
-        n_t = total_tables
-        n_f = len(output_files)
+        lines = report_text.split("\n")
+        n_t = sum(1 for ln in lines if ln.startswith("Table "))
+        n_f = sum(1 for ln in lines if ln.strip().startswith("Output:"))
         self._status_lbl.setText(
             f"Done. {n_t} table{'s' if n_t != 1 else ''} "
             f"extracted to {n_f} file{'s' if n_f != 1 else ''}."
         )
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._show_report(report_text, output_dir)
 
-        self._show_report("\n".join(report_lines), self.output_dir)
+    def _on_extraction_failed(self, msg: str):
+        self._extract_btn.setEnabled(True)
+        self._extract_btn.setText("Extract to CSV")
+        QMessageBox.critical(self, "Extraction Failed", msg)
 
     # ======================================================================
     # REPORT PANEL
@@ -1783,6 +2054,7 @@ class PDFtoCSVTool(QWidget):
             else:
                 subprocess.Popen(["xdg-open", path])
         except Exception as e:
+            logger.exception("could not open folder")
             QMessageBox.critical(self, "Error", f"Could not open folder:\n{e}")
 
     def cleanup(self):

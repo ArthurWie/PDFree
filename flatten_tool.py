@@ -3,7 +3,9 @@
 PySide6. Loaded by main.py when the user clicks "Flatten".
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -18,10 +20,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QApplication,
     QCheckBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
@@ -40,13 +41,15 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 
 def _fmt_size(n: int) -> str:
@@ -76,6 +79,39 @@ def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None) -> QPush
     return b
 
 
+class _FlattenWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, annots, js, links):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._annots = annots
+        self._js = js
+        self._links = links
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            doc = fitz.open(self._pdf_path)
+            try:
+                if self._annots:
+                    doc.bake(annots=True, widgets=True)
+                if self._js or self._links:
+                    doc.scrub(javascript=self._js, links=self._links)
+                doc.save(self._out_path, garbage=3, deflate=True)
+            finally:
+                doc.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+
+
 class FlattenTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -91,6 +127,7 @@ class FlattenTool(QWidget):
 
         self._pdf_path = ""
         self._original_size = 0
+        self._worker = None
 
         self._build_ui()
         self.setAcceptDrops(True)
@@ -130,7 +167,7 @@ class FlattenTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("minimize", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Flatten PDF")
@@ -154,7 +191,7 @@ class FlattenTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -311,6 +348,7 @@ class FlattenTool(QWidget):
             widget_count = sum(len(list(doc[i].widgets())) for i in range(doc.page_count))
             doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -397,39 +435,30 @@ class FlattenTool(QWidget):
         self._status_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; border: none; background: transparent;"
         )
-        QApplication.processEvents()
 
-        try:
-            doc = fitz.open(self._pdf_path)
-            try:
-                if self._chk_annots.isChecked():
-                    doc.bake(annots=True, widgets=True)
-                if self._chk_js.isChecked() or self._chk_links.isChecked():
-                    doc.scrub(
-                        javascript=self._chk_js.isChecked(),
-                        links=self._chk_links.isChecked(),
-                    )
-                self._progress.setValue(80)
-                QApplication.processEvents()
-                doc.save(out_path, garbage=3, deflate=True)
-                self._progress.setValue(100)
-            finally:
-                doc.close()
+        self._worker = _FlattenWorker(
+            self._pdf_path, out_path,
+            self._chk_annots.isChecked(),
+            self._chk_js.isChecked(),
+            self._chk_links.isChecked(),
+        )
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-            self._status_lbl.setText("Done.")
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
+    def _on_save_done(self, out_path: str):
+        self._status_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._flatten_btn.setEnabled(True)
+        self._progress.hide()
 
-        except Exception as exc:
-            QMessageBox.critical(self, "Flatten failed", str(exc))
-            self._status_lbl.setText("Flatten failed.")
-            self._status_lbl.setStyleSheet(
-                "color: red; font: 12px; border: none; background: transparent;"
-            )
-        finally:
-            self._flatten_btn.setEnabled(True)
-            self._progress.hide()
+    def _on_save_failed(self, msg: str):
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._flatten_btn.setEnabled(True)
+        self._progress.hide()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():

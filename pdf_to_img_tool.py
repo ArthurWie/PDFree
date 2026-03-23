@@ -3,6 +3,7 @@
 PySide6. Loaded by main.py when the user clicks "PDF to Image".
 """
 
+import logging
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -18,11 +19,10 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QProgressBar,
-    QApplication,
     QComboBox,
     QSlider,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -47,16 +47,61 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
-from utils import _fitz_pix_to_qpixmap
+from utils import _fitz_pix_to_qpixmap, assert_file_writable
 
 try:
     import fitz
 except ImportError:
     fitz = None
 
+logger = logging.getLogger(__name__)
+
 DPI_OPTIONS = ["72", "96", "150", "200", "300"]
+
+
+class _ExportImagesWorker(QThread):
+    finished = Signal(str, int)   # out_dir, count
+    failed = Signal(str)
+    progress = Signal(int)
+
+    def __init__(self, pdf_path, out_dir, pages, dpi, fmt, quality, stem, parent=None):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_dir = out_dir
+        self._pages = pages
+        self._dpi = dpi
+        self._fmt = fmt
+        self._quality = quality
+        self._stem = stem
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_dir) / "_probe")
+            mat = fitz.Matrix(self._dpi / 72, self._dpi / 72)
+            total = len(self._pages)
+            exported = 0
+            for i, page_idx in enumerate(self._pages):
+                doc = fitz.open(self._pdf_path)
+                page = doc.load_page(page_idx)
+                pix = page.get_pixmap(matrix=mat)
+                ext = "jpg" if self._fmt == "jpeg" else "png"
+                out_path = str(
+                    Path(self._out_dir) / f"{self._stem}_page{page_idx + 1:04d}.{ext}"
+                )
+                if self._fmt == "jpeg":
+                    pix.save(out_path, jpg_quality=self._quality)
+                else:
+                    pix.save(out_path)
+                doc.close()
+                exported += 1
+                self.progress.emit(int((i + 1) / total * 100))
+            self.finished.emit(self._out_dir, exported)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 FORMAT_OPTIONS = ["PNG", "JPEG"]
 THUMB_SCALE = 0.2
 GRID_COLS = 4
@@ -209,6 +254,7 @@ class PDFToImgTool(QWidget):
         self._total_pages = 0
         self._selected: set[int] = set()
         self._cells: list[_PageCell] = []
+        self._worker = None
         self._thumb_timer = QTimer(self)
         self._thumb_timer.setSingleShot(True)
         self._thumb_timer.timeout.connect(self._render_thumbs_deferred)
@@ -255,7 +301,7 @@ class PDFToImgTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("image", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("PDF to Image")
         title_lbl.setStyleSheet(
@@ -272,7 +318,7 @@ class PDFToImgTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
@@ -483,6 +529,7 @@ class PDFToImgTool(QWidget):
         try:
             self._doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -598,42 +645,36 @@ class PDFToImgTool(QWidget):
         quality = self._quality_slider.value()
         stem = Path(self._pdf_path).stem
         pages = sorted(self._selected)
-        total = len(pages)
 
         self._progress.setValue(0)
         self._progress.show()
         self._export_btn.setEnabled(False)
         self._status_lbl.setText("Exporting...")
-        QApplication.processEvents()
 
-        try:
-            mat = fitz.Matrix(dpi / 72, dpi / 72)
-            exported = 0
-            for i, page_idx in enumerate(pages):
-                page = self._doc.load_page(page_idx)
-                pix = page.get_pixmap(matrix=mat)
-                ext = "jpg" if fmt == "jpeg" else "png"
-                out_path = str(Path(out_dir) / f"{stem}_page{page_idx + 1:04d}.{ext}")
-                if fmt == "jpeg":
-                    pix.save(out_path, jpg_quality=quality)
-                else:
-                    pix.save(out_path)
-                exported += 1
-                self._progress.setValue(int((i + 1) / total * 100))
-                QApplication.processEvents()
+        self._worker = _ExportImagesWorker(
+            self._pdf_path, out_dir, pages, dpi, fmt, quality, stem
+        )
+        self._worker.progress.connect(self._progress.setValue)
+        self._worker.finished.connect(self._on_export_done)
+        self._worker.failed.connect(self._on_export_failed)
+        self._worker.start()
 
-            self._status_lbl.setText(
-                f"Exported {exported} image{'s' if exported != 1 else ''} → {out_dir}"
-            )
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
-            self._status_lbl.setText("Export failed.")
-        finally:
-            self._export_btn.setEnabled(len(self._selected) > 0)
-            self._progress.hide()
+    def _on_export_done(self, out_dir: str, count: int):
+        self._status_lbl.setText(
+            f"Exported {count} image{'s' if count != 1 else ''} → {out_dir}"
+        )
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._export_btn.setEnabled(len(self._selected) > 0)
+        self._progress.hide()
+
+    def _on_export_failed(self, msg: str):
+        logger.error("export failed: %s", msg)
+        QMessageBox.critical(self, "Export failed", msg)
+        self._status_lbl.setText("Export failed.")
+        self._export_btn.setEnabled(len(self._selected) > 0)
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

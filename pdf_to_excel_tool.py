@@ -6,6 +6,7 @@ Bottom: scrollable thumbnail strip.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -30,9 +31,8 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QProgressBar,
     QSizePolicy,
-    QApplication,
 )
-from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtCore import Qt, QThread, QTimer, QSize, Signal
 from PySide6.QtGui import QPainter, QColor, QPixmap, QPen, QFont, QIcon
 from icons import svg_pixmap
 from colors import (
@@ -50,8 +50,9 @@ from colors import (
     GREEN_HOVER,
     RED,
     THUMB_BG,
-)
-from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
+    EMERALD,
+    BLUE_MED,)
+from utils import _fitz_pix_to_qpixmap, _WheelToHScroll, assert_file_writable
 
 try:
     import fitz
@@ -75,6 +76,190 @@ try:
 except ImportError:
     _HAS_OPENPYXL = False
     openpyxl = None
+
+logger = logging.getLogger(__name__)
+
+
+class _ExcelExtractionWorker(QThread):
+    progress = Signal(int, str)  # percent, status text
+    finished = Signal(str, str)  # report_text, out_dir
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        pdf_path,
+        password,
+        pages,
+        out_path,
+        settings,
+        min_rows,
+        min_cols,
+        skip_image,
+        sheet_mode,
+        bold_header,
+        auto_fit,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._password = password
+        self._pages = pages
+        self._out_path = out_path
+        self._settings = settings
+        self._min_rows = min_rows
+        self._min_cols = min_cols
+        self._skip_image = skip_image
+        self._sheet_mode = sheet_mode
+        self._bold_header = bold_header
+        self._auto_fit = auto_fit
+
+    @staticmethod
+    def _page_is_image_only(doc, pg_idx):
+        raw = doc[pg_idx].get_text()
+        text = raw.strip() if isinstance(raw, str) else ""
+        return len(text) < 5
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            self._do_extract()
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+    def _do_extract(self):
+        doc = fitz.open(self._pdf_path)
+        pldoc = pdfplumber.open(self._pdf_path)
+        if self._password:
+            doc.authenticate(self._password)
+
+        try:
+            warnings = []
+            report_lines = ["=== Extraction Complete ===\n"]
+            report_lines.append(f"Input:  {os.path.basename(self._pdf_path)}")
+            report_lines.append(
+                f"Pages processed: {len(self._pages)}  "
+                f"(pages {self._pages[0] + 1}\u2013{self._pages[-1] + 1})\n"
+            )
+
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)
+
+            total_tables = 0
+            total_rows = 0
+            sheet_idx = 0
+            estimated_total = max(len(self._pages), 1)
+
+            for pg_num, pg_idx in enumerate(self._pages):
+                self.progress.emit(
+                    int(pg_num / estimated_total * 85),
+                    f"Processing page {pg_idx + 1}…",
+                )
+
+                if self._skip_image and self._page_is_image_only(doc, pg_idx):
+                    warnings.append(f"Page {pg_idx + 1}: image-only page — skipped.")
+                    continue
+
+                try:
+                    pl_page = pldoc.pages[pg_idx]
+                    tables = pl_page.find_tables(self._settings)
+                except Exception as e:
+                    warnings.append(f"Page {pg_idx + 1}: detection error — {e}")
+                    continue
+
+                tables = [
+                    t
+                    for t in tables
+                    if t.rows
+                    and len(t.rows) >= self._min_rows
+                    and len(t.rows[0]) >= self._min_cols
+                ]
+
+                if not tables:
+                    warnings.append(f"Page {pg_idx + 1}: no qualifying tables found.")
+
+                for tbl_idx, tbl in enumerate(tables):
+                    rows = tbl.extract()
+                    if not rows:
+                        continue
+
+                    if self._sheet_mode == "Table":
+                        sheet_name = f"P{pg_idx + 1}_T{tbl_idx + 1}"
+                    else:
+                        sheet_name = f"Page {pg_idx + 1}"
+
+                    if sheet_name not in wb.sheetnames:
+                        ws = wb.create_sheet(title=sheet_name)
+                        first_row_written = False
+                    else:
+                        ws = wb[sheet_name]
+                        first_row_written = True
+
+                    for row_idx, row in enumerate(rows):
+                        cells = [str(c) if c is not None else "" for c in row]
+                        ws.append(cells)
+                        if row_idx == 0 and not first_row_written and self._bold_header:
+                            for cell in ws[ws.max_row]:
+                                cell.font = XLFont(bold=True)
+                                cell.fill = PatternFill("solid", fgColor="DBEAFE")
+
+                    if self._auto_fit:
+                        for col in ws.columns:
+                            max_len = max(
+                                (len(str(cell.value or "")) for cell in col), default=8
+                            )
+                            ws.column_dimensions[col[0].column_letter].width = min(
+                                max_len + 2, 50
+                            )
+
+                    total_tables += 1
+                    total_rows += len(rows)
+                    sheet_idx += 1
+                    report_lines.append(
+                        f"Table {total_tables} — page {pg_idx + 1}, sheet '{sheet_name}'"
+                    )
+                    report_lines.append(
+                        f"  Dimensions: {len(rows)} rows \u00d7 "
+                        f"{max(len(r) for r in rows) if rows else 0} columns\n"
+                    )
+
+            if not wb.sheetnames:
+                wb.create_sheet("No tables found")
+                warnings.append("No tables were found in the selected pages.")
+
+            wb.save(self._out_path)
+
+            report_lines.append(
+                "\n\u2500\u2500 Summary \u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+                "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+                "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+            )
+            report_lines.append(f"Tables extracted: {total_tables}")
+            report_lines.append(f"Total rows:       {total_rows}")
+            report_lines.append(f"Output file:      {os.path.basename(self._out_path)}")
+
+            if warnings:
+                report_lines.append(
+                    "\n\u2500\u2500 Warnings \u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+                    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+                    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+                )
+                for w in warnings:
+                    report_lines.append(f"  \u2022 {w}")
+
+            out_dir = str(Path(self._out_path).parent)
+            self.finished.emit("\n".join(report_lines), out_dir)
+
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
+            try:
+                pldoc.close()
+            except Exception:
+                pass
 
 
 def _render_page_qpixmap(doc, idx: int, max_w: int):
@@ -149,6 +334,7 @@ class PDFToExcelTool(QWidget):
         self._table_bboxes: list = []
         self._canvas_table_rects: list = []
         self._report_widget: Optional[QWidget] = None
+        self._worker = None
 
         root_v = QVBoxLayout(self)
         root_v.setContentsMargins(0, 0, 0, 0)
@@ -197,7 +383,9 @@ class PDFToExcelTool(QWidget):
     def _build_left(self, parent_h: QHBoxLayout):
         left_outer = QWidget()
         left_outer.setFixedWidth(self.LEFT_W)
-        left_outer.setStyleSheet(f"background: {WHITE}; border-right: 1px solid {G200};")
+        left_outer.setStyleSheet(
+            f"background: {WHITE}; border-right: 1px solid {G200};"
+        )
         outer_v = QVBoxLayout(left_outer)
         outer_v.setContentsMargins(0, 0, 0, 0)
         outer_v.setSpacing(0)
@@ -224,7 +412,7 @@ class PDFToExcelTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("file-text", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("PDF to Excel")
@@ -243,7 +431,7 @@ class PDFToExcelTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -278,7 +466,9 @@ class PDFToExcelTool(QWidget):
         self._section(lay, "DETECTION METHOD")
         lay.addSpacing(6)
         self._detect_combo = QComboBox()
-        self._detect_combo.addItems(["Lattice (ruled lines)", "Stream (whitespace)", "Hybrid"])
+        self._detect_combo.addItems(
+            ["Lattice (ruled lines)", "Stream (whitespace)", "Hybrid"]
+        )
         self._detect_combo.setFixedHeight(30)
         self._detect_combo.setStyleSheet(self._combo_style())
         lay.addWidget(self._detect_combo)
@@ -307,7 +497,9 @@ class PDFToExcelTool(QWidget):
         mr_h.setContentsMargins(0, 0, 0, 0)
         mr_h.setSpacing(8)
         mr_lbl = QLabel("Min rows:")
-        mr_lbl.setStyleSheet(f"color: {G500}; font: 12px; background: transparent; border: none;")
+        mr_lbl.setStyleSheet(
+            f"color: {G500}; font: 12px; background: transparent; border: none;"
+        )
         mr_h.addWidget(mr_lbl)
         self._min_rows_spin = QSpinBox()
         self._min_rows_spin.setRange(1, 100)
@@ -328,7 +520,9 @@ class PDFToExcelTool(QWidget):
         mc_h.setContentsMargins(0, 0, 0, 0)
         mc_h.setSpacing(8)
         mc_lbl = QLabel("Min columns:")
-        mc_lbl.setStyleSheet(f"color: {G500}; font: 12px; background: transparent; border: none;")
+        mc_lbl.setStyleSheet(
+            f"color: {G500}; font: 12px; background: transparent; border: none;"
+        )
         mc_h.addWidget(mc_lbl)
         self._min_cols_spin = QSpinBox()
         self._min_cols_spin.setRange(1, 100)
@@ -361,7 +555,9 @@ class PDFToExcelTool(QWidget):
         sr_h.setContentsMargins(0, 0, 0, 0)
         sr_h.setSpacing(8)
         sr_lbl = QLabel("Sheet per:")
-        sr_lbl.setStyleSheet(f"color: {G500}; font: 12px; background: transparent; border: none;")
+        sr_lbl.setStyleSheet(
+            f"color: {G500}; font: 12px; background: transparent; border: none;"
+        )
         sr_h.addWidget(sr_lbl)
         self._sheet_mode_combo = QComboBox()
         self._sheet_mode_combo.addItems(["Table", "Page"])
@@ -564,7 +760,8 @@ class PDFToExcelTool(QWidget):
         current = self._out_entry.text().strip()
         start = str(Path(self.pdf_path).parent) if self.pdf_path else ""
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Excel File",
+            self,
+            "Save Excel File",
             os.path.join(start, current) if current and start else current,
             "Excel Files (*.xlsx)",
         )
@@ -591,6 +788,7 @@ class PDFToExcelTool(QWidget):
         try:
             doc = fitz.open(path)
         except Exception as e:
+            logger.exception("could not open pdf")
             QMessageBox.critical(self, "Cannot Open PDF", f"Failed to open file:\n{e}")
             return
 
@@ -623,6 +821,7 @@ class PDFToExcelTool(QWidget):
             else:
                 self._pldoc = pdfplumber.open(path)
         except Exception as e:
+            logger.exception("could not open pdf")
             QMessageBox.critical(
                 self, "pdfplumber Error", f"Could not open PDF with pdfplumber:\n{e}"
             )
@@ -855,12 +1054,13 @@ class PDFToExcelTool(QWidget):
 
         out_name = self._out_entry.text().strip()
         if not out_name:
-            QMessageBox.warning(self, "No Output File", "Please specify an output file name.")
+            QMessageBox.warning(
+                self, "No Output File", "Please specify an output file name."
+            )
             return
         if not out_name.lower().endswith(".xlsx"):
             out_name += ".xlsx"
 
-        # If out_name is just a filename (no directory), save next to the source
         if not os.path.isabs(out_name) and not os.path.dirname(out_name):
             out_path = os.path.join(str(Path(self.pdf_path).parent), out_name)
         else:
@@ -890,128 +1090,48 @@ class PDFToExcelTool(QWidget):
         self._progress.setValue(0)
         self._progress.show()
         self._status_lbl.setText("Starting…")
-        QApplication.processEvents()
 
-        warnings: list = []
-        report_lines: list = []
-        report_lines.append("=== Extraction Complete ===\n")
-        report_lines.append(f"Input:  {os.path.basename(self.pdf_path)}")
-        report_lines.append(
-            f"Pages processed: {len(pages)}  (pages {pages[0] + 1}\u2013{pages[-1] + 1})\n"
+        self._worker = _ExcelExtractionWorker(
+            pdf_path=self.pdf_path,
+            password=self._password,
+            pages=pages,
+            out_path=out_path,
+            settings=settings,
+            min_rows=min_rows,
+            min_cols=min_cols,
+            skip_image=skip_image,
+            sheet_mode=sheet_mode,
+            bold_header=bold_header,
+            auto_fit=auto_fit,
         )
+        self._worker.progress.connect(self._on_extraction_progress)
+        self._worker.finished.connect(self._on_extraction_done)
+        self._worker.failed.connect(self._on_extraction_failed)
+        self._worker.start()
 
-        wb = openpyxl.Workbook()
-        wb.remove(wb.active)
+    def _on_extraction_progress(self, pct: int, text: str):
+        self._progress.setValue(pct)
+        self._status_lbl.setText(text)
 
-        total_tables = 0
-        total_rows = 0
-        sheet_idx = 0
-        estimated_total = max(len(pages), 1)
-
-        for pg_num, pg_idx in enumerate(pages):
-            self._status_lbl.setText(f"Processing page {pg_idx + 1}…")
-            QApplication.processEvents()
-
-            if skip_image and self._page_is_image_only(pg_idx):
-                warnings.append(f"Page {pg_idx + 1}: image-only page — skipped.")
-                continue
-
-            try:
-                pl_page = self._pldoc.pages[pg_idx]
-                tables = pl_page.find_tables(settings)
-            except Exception as e:
-                warnings.append(f"Page {pg_idx + 1}: detection error — {e}")
-                continue
-
-            tables = [
-                t for t in tables
-                if t.rows and len(t.rows) >= min_rows and len(t.rows[0]) >= min_cols
-            ]
-
-            if not tables:
-                warnings.append(f"Page {pg_idx + 1}: no qualifying tables found.")
-
-            for tbl_idx, tbl in enumerate(tables):
-                rows = tbl.extract()
-                if not rows:
-                    continue
-
-                if sheet_mode == "Table":
-                    sheet_name = f"P{pg_idx + 1}_T{tbl_idx + 1}"
-                else:
-                    sheet_name = f"Page {pg_idx + 1}"
-
-                if sheet_name not in wb.sheetnames:
-                    ws = wb.create_sheet(title=sheet_name)
-                    first_row_written = False
-                else:
-                    ws = wb[sheet_name]
-                    first_row_written = True
-
-                for row_idx, row in enumerate(rows):
-                    cells = [str(c) if c is not None else "" for c in row]
-                    ws.append(cells)
-
-                    if row_idx == 0 and not first_row_written and bold_header:
-                        for cell in ws[ws.max_row]:
-                            cell.font = XLFont(bold=True)
-                            cell.fill = PatternFill("solid", fgColor="DBEAFE")
-
-                if auto_fit:
-                    for col in ws.columns:
-                        max_len = max(
-                            (len(str(cell.value or "")) for cell in col), default=8
-                        )
-                        ws.column_dimensions[col[0].column_letter].width = min(
-                            max_len + 2, 50
-                        )
-
-                total_tables += 1
-                total_rows += len(rows)
-                sheet_idx += 1
-                report_lines.append(
-                    f"Table {total_tables} — page {pg_idx + 1}, sheet '{sheet_name}'"
-                )
-                report_lines.append(
-                    f"  Dimensions: {len(rows)} rows \u00d7 "
-                    f"{max(len(r) for r in rows) if rows else 0} columns\n"
-                )
-
-            self._progress.setValue(int((pg_num + 1) / estimated_total * 85))
-            QApplication.processEvents()
-
-        if not wb.sheetnames:
-            wb.create_sheet("No tables found")
-            warnings.append("No tables were found in the selected pages.")
-
-        try:
-            wb.save(out_path)
-        except Exception as e:
-            QMessageBox.critical(self, "Write Error", f"Could not save Excel file:\n{e}")
-            self._extract_btn.setEnabled(True)
-            self._extract_btn.setText("Extract to Excel")
-            self._progress.hide()
-            return
-
-        self._progress.setValue(100)
-
-        report_lines.append("\n\u2500\u2500 Summary \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-        report_lines.append(f"Tables extracted: {total_tables}")
-        report_lines.append(f"Total rows:       {total_rows}")
-        report_lines.append(f"Output file:      {os.path.basename(out_path)}")
-
-        if warnings:
-            report_lines.append("\n\u2500\u2500 Warnings \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-            for w in warnings:
-                report_lines.append(f"  \u2022 {w}")
-
+    def _on_extraction_done(self, report_text: str, out_dir: str):
         self._extract_btn.setEnabled(True)
         self._extract_btn.setText("Extract to Excel")
+        self._progress.setValue(100)
+        lines = report_text.split("\n")
+        n_t = sum(1 for ln in lines if ln.startswith("Table "))
         self._status_lbl.setText(
-            f"Done. {total_tables} table{'s' if total_tables != 1 else ''} extracted."
+            f"Done. {n_t} table{'s' if n_t != 1 else ''} extracted."
         )
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._show_report(report_text, out_dir)
 
-        self._show_report("\n".join(report_lines), str(Path(out_path).parent))
+    def _on_extraction_failed(self, msg: str):
+        self._extract_btn.setEnabled(True)
+        self._extract_btn.setText("Extract to Excel")
+        self._progress.hide()
+        QMessageBox.critical(self, "Extraction Failed", msg)
 
     def _show_report(self, text: str, output_dir: str):
         if self._report_widget:
@@ -1089,6 +1209,7 @@ class PDFToExcelTool(QWidget):
             else:
                 subprocess.Popen(["xdg-open", path])
         except Exception as e:
+            logger.exception("could not open folder")
             QMessageBox.critical(self, "Error", f"Could not open folder:\n{e}")
 
     def cleanup(self):

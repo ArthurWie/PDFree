@@ -9,7 +9,9 @@ Layouts
 Booklet  – reorder pages for printing and folding into a booklet.
 """
 
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -24,10 +26,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QApplication,
     QComboBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
@@ -49,13 +50,15 @@ from colors import (
     WHITE,
     TEAL,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 
 try:
     import fitz
 except ImportError:
     fitz = None
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Layout definitions
@@ -241,6 +244,104 @@ class _LayoutCard(QFrame):
 # ===========================================================================
 
 
+class _NUpWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, layout_id, out_w, out_h):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._layout_id = layout_id
+        self._out_w = out_w
+        self._out_h = out_h
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            if self._layout_id == "2up":
+                self._create_2up()
+            elif self._layout_id == "4up":
+                self._create_4up()
+            else:
+                self._create_booklet()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+
+    def _create_2up(self):
+        out = fitz.open()
+        src = fitz.open(self._pdf_path)
+        total = src.page_count
+        try:
+            for i in range(0, total, 2):
+                sheet = out.new_page(width=self._out_w, height=self._out_h)
+                sheet.show_pdf_page(fitz.Rect(0, 0, self._out_w / 2, self._out_h), src, i)
+                if i + 1 < total:
+                    sheet.show_pdf_page(
+                        fitz.Rect(self._out_w / 2, 0, self._out_w, self._out_h), src, i + 1
+                    )
+            out.save(self._out_path, garbage=3, deflate=True)
+        finally:
+            src.close()
+            out.close()
+
+    def _create_4up(self):
+        out = fitz.open()
+        src = fitz.open(self._pdf_path)
+        total = src.page_count
+        try:
+            for i in range(0, total, 4):
+                sheet = out.new_page(width=self._out_w, height=self._out_h)
+                positions = [
+                    fitz.Rect(0, 0, self._out_w / 2, self._out_h / 2),
+                    fitz.Rect(self._out_w / 2, 0, self._out_w, self._out_h / 2),
+                    fitz.Rect(0, self._out_h / 2, self._out_w / 2, self._out_h),
+                    fitz.Rect(self._out_w / 2, self._out_h / 2, self._out_w, self._out_h),
+                ]
+                for j, rect in enumerate(positions):
+                    if i + j < total:
+                        sheet.show_pdf_page(rect, src, i + j)
+            out.save(self._out_path, garbage=3, deflate=True)
+        finally:
+            src.close()
+            out.close()
+
+    def _create_booklet(self):
+        out = fitz.open()
+        src = fitz.open(self._pdf_path)
+        total = src.page_count
+        n = total
+        while n % 4 != 0:
+            n += 1
+        order = []
+        lo, hi = 0, n - 1
+        while lo <= hi:
+            order.append((hi, lo))
+            lo += 1
+            hi -= 1
+        try:
+            for back_pg, front_pg in order:
+                sheet = out.new_page(width=self._out_w, height=self._out_h)
+                if back_pg < total:
+                    sheet.show_pdf_page(
+                        fitz.Rect(0, 0, self._out_w / 2, self._out_h), src, back_pg
+                    )
+                if front_pg < total:
+                    sheet.show_pdf_page(
+                        fitz.Rect(self._out_w / 2, 0, self._out_w, self._out_h),
+                        src, front_pg,
+                    )
+            out.save(self._out_path, garbage=3, deflate=True)
+        finally:
+            src.close()
+            out.close()
+
+
 class NUpTool(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -257,6 +358,7 @@ class NUpTool(QWidget):
         self._pdf_path = ""
         self._layout_id = "2up"
         self._layout_cards: dict[str, _LayoutCard] = {}
+        self._worker = None
 
         self._build_ui()
         self.setAcceptDrops(True)
@@ -300,7 +402,7 @@ class NUpTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("layers", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("N-Up Layout")
@@ -319,7 +421,7 @@ class NUpTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
@@ -346,17 +448,17 @@ class NUpTool(QWidget):
 
         # Layout section
         lay.addWidget(_section("LAYOUT"))
-        lay.addSpacing(10)
+        lay.addSpacing(8)
 
         for layout in LAYOUTS:
             card = _LayoutCard(layout, inner)
             self._layout_cards[layout["id"]] = card
             lay.addWidget(card)
-            lay.addSpacing(6)
+            lay.addSpacing(8)
 
         self._layout_cards["2up"].set_selected(True)
 
-        lay.addSpacing(16)
+        lay.addSpacing(24)
 
         # Output page size
         lay.addWidget(_section("OUTPUT PAGE SIZE"))
@@ -467,6 +569,7 @@ class NUpTool(QWidget):
             page_count = doc.page_count
             doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -579,120 +682,29 @@ class NUpTool(QWidget):
         self._status_lbl.setStyleSheet(
             f"color: {G500}; font: 12px; border: none; background: transparent;"
         )
-        QApplication.processEvents()
 
-        try:
-            if self._layout_id == "2up":
-                self._create_2up(out_path)
-            elif self._layout_id == "4up":
-                self._create_4up(out_path)
-            else:
-                self._create_booklet(out_path)
-
-            out_size = Path(out_path).stat().st_size
-            self._status_lbl.setText(f"Saved — {_fmt_size(out_size)}")
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Failed", str(exc))
-            self._status_lbl.setText("Failed.")
-            self._status_lbl.setStyleSheet(
-                "color: red; font: 12px; border: none; background: transparent;"
-            )
-        finally:
-            self._create_btn.setEnabled(True)
-            self._progress.hide()
-
-    def _create_2up(self, out_path: str):
         out_w, out_h = OUTPUT_SIZES[self._size_combo.currentText()]
-        out = fitz.open()
-        src = fitz.open(self._pdf_path)
-        total = src.page_count
+        self._worker = _NUpWorker(
+            self._pdf_path, out_path, self._layout_id, out_w, out_h
+        )
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
 
-        try:
-            for i in range(0, total, 2):
-                sheet = out.new_page(width=out_w, height=out_h)
-                left_rect = fitz.Rect(0, 0, out_w / 2, out_h)
-                sheet.show_pdf_page(left_rect, src, i)
-                if i + 1 < total:
-                    right_rect = fitz.Rect(out_w / 2, 0, out_w, out_h)
-                    sheet.show_pdf_page(right_rect, src, i + 1)
-                self._progress.setValue(int((i + 2) / total * 90))
-                QApplication.processEvents()
+    def _on_save_done(self, out_path: str):
+        out_size = Path(out_path).stat().st_size
+        self._status_lbl.setText(f"Saved — {_fmt_size(out_size)}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._create_btn.setEnabled(True)
+        self._progress.hide()
 
-            out.save(out_path, garbage=3, deflate=True)
-        finally:
-            src.close()
-            out.close()
-
-        self._progress.setValue(100)
-
-    def _create_4up(self, out_path: str):
-        out_w, out_h = OUTPUT_SIZES[self._size_combo.currentText()]
-        out = fitz.open()
-        src = fitz.open(self._pdf_path)
-        total = src.page_count
-
-        try:
-            for i in range(0, total, 4):
-                sheet = out.new_page(width=out_w, height=out_h)
-                positions = [
-                    fitz.Rect(0, 0, out_w / 2, out_h / 2),
-                    fitz.Rect(out_w / 2, 0, out_w, out_h / 2),
-                    fitz.Rect(0, out_h / 2, out_w / 2, out_h),
-                    fitz.Rect(out_w / 2, out_h / 2, out_w, out_h),
-                ]
-                for j, rect in enumerate(positions):
-                    if i + j < total:
-                        sheet.show_pdf_page(rect, src, i + j)
-                self._progress.setValue(int((i + 4) / total * 90))
-                QApplication.processEvents()
-
-            out.save(out_path, garbage=3, deflate=True)
-        finally:
-            src.close()
-            out.close()
-
-        self._progress.setValue(100)
-
-    def _create_booklet(self, out_path: str):
-        out_w, out_h = OUTPUT_SIZES[self._size_combo.currentText()]
-        out = fitz.open()
-        src = fitz.open(self._pdf_path)
-        total = src.page_count
-
-        n = total
-        while n % 4 != 0:
-            n += 1
-
-        order = []
-        lo, hi = 0, n - 1
-        while lo <= hi:
-            order.append((hi, lo))
-            lo += 1
-            hi -= 1
-
-        try:
-            for sheet_idx, (back_pg, front_pg) in enumerate(order):
-                sheet = out.new_page(width=out_w, height=out_h)
-                if back_pg < total:
-                    sheet.show_pdf_page(
-                        fitz.Rect(0, 0, out_w / 2, out_h), src, back_pg
-                    )
-                if front_pg < total:
-                    sheet.show_pdf_page(
-                        fitz.Rect(out_w / 2, 0, out_w, out_h), src, front_pg
-                    )
-                self._progress.setValue(int((sheet_idx + 1) / len(order) * 90))
-                QApplication.processEvents()
-
-            out.save(out_path, garbage=3, deflate=True)
-        finally:
-            src.close()
-            out.close()
-
-        self._progress.setValue(100)
+    def _on_save_failed(self, msg: str):
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Failed.")
+        self._create_btn.setEnabled(True)
+        self._progress.hide()
 
     # -----------------------------------------------------------------------
     # Drag and drop

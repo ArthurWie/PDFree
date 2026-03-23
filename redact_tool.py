@@ -3,10 +3,14 @@
 PySide6. Loaded by main.py when the user clicks "Manual Redaction".
 """
 
+import logging
+import re
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
+    QCheckBox,
     QFrame,
     QLabel,
     QPushButton,
@@ -17,9 +21,8 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QSizePolicy,
-    QApplication,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -44,7 +47,7 @@ from colors import (
     G900,
     WHITE,
     EMERALD,
-)
+    BLUE_MED,)
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
 
@@ -53,7 +56,41 @@ try:
 except ImportError:
     fitz = None
 
+logger = logging.getLogger(__name__)
+
 RENDER_SCALE = 1.5
+
+
+class _RedactWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, out_path, all_rects, parent=None):
+        super().__init__(parent)
+        self._pdf_path = pdf_path
+        self._out_path = out_path
+        self._all_rects = all_rects
+
+    def run(self):
+        try:
+            assert_file_writable(Path(self._out_path))
+            backup_original(Path(self._pdf_path))
+            doc = fitz.open(self._pdf_path)
+            for page_idx, rects in self._all_rects.items():
+                page = doc[page_idx]
+                for x0, y0, x1, y1 in rects:
+                    page.add_redact_annot(
+                        fitz.Rect(x0, y0, x1, y1),
+                        fill=(0, 0, 0),
+                    )
+                page.apply_redactions()
+            doc.save(self._out_path, garbage=3, deflate=True)
+            doc.close()
+            self.finished.emit(self._out_path)
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=36, w=None):
@@ -153,8 +190,11 @@ class _RedactCanvas(QWidget):
 
         if self._pixmap is None or self._pixmap.isNull():
             p.setPen(QColor(G400))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Load a PDF, then drag to\nmark redaction areas")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Load a PDF, then drag to\nmark redaction areas",
+            )
             return
 
         cw, ch = self.width(), self.height()
@@ -169,15 +209,18 @@ class _RedactCanvas(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(0, 0, 0, 28))
         p.drawRoundedRect(ox + 4, oy + 4, dw, dh, 4, 4)
-        scaled = self._pixmap.scaled(dw, dh,
-                                     Qt.AspectRatioMode.KeepAspectRatio,
-                                     Qt.TransformationMode.SmoothTransformation)
+        scaled = self._pixmap.scaled(
+            dw,
+            dh,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         p.drawPixmap(ox, oy, scaled)
 
         # Draw existing redaction boxes (solid black)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(0, 0, 0))
-        for (rx0, ry0, rx1, ry1) in self._rects:
+        for rx0, ry0, rx1, ry1 in self._rects:
             sx0, sy0 = self._page_to_screen(rx0, ry0)
             sx1, sy1 = self._page_to_screen(rx1, ry1)
             p.drawRect(int(sx0), int(sy0), int(sx1 - sx0), int(sy1 - sy0))
@@ -265,8 +308,8 @@ class RedactTool(QWidget):
         self._doc = None
         self._total_pages = 0
         self._current_page = 0
-        # per-page redaction rects in page coordinates
         self._all_rects: dict[int, list] = {}
+        self._worker = None
         self._build_ui()
         self.setAcceptDrops(True)
 
@@ -304,7 +347,7 @@ class RedactTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("eraser", BLUE, 20))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
         title_lbl = QLabel("Redact PDF")
         title_lbl.setStyleSheet(
@@ -321,7 +364,7 @@ class RedactTool(QWidget):
         dz = QFrame()
         dz.setFixedHeight(52)
         dz.setStyleSheet(
-            f"background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_h = QHBoxLayout(dz)
@@ -366,6 +409,49 @@ class RedactTool(QWidget):
         lay.addWidget(steps_lbl)
         lay.addSpacing(20)
 
+        # Find & redact text
+        lay.addWidget(_section("FIND & REDACT TEXT"))
+        lay.addSpacing(8)
+        self._search_entry = QLineEdit()
+        self._search_entry.setPlaceholderText("Search text or pattern…")
+        self._search_entry.setFixedHeight(34)
+        self._search_entry.setStyleSheet(
+            f"border: 1px solid {G200}; border-radius: 6px; padding: 0 8px;"
+            f" font: 13px; color: {G900}; background: {WHITE};"
+        )
+        lay.addWidget(self._search_entry)
+        lay.addSpacing(6)
+
+        chk_row = QHBoxLayout()
+        chk_row.setContentsMargins(0, 0, 0, 0)
+        chk_row.setSpacing(12)
+        self._case_chk = QCheckBox("Case sensitive")
+        self._case_chk.setStyleSheet(
+            f"color: {G700}; font: 12px; background: transparent;"
+        )
+        chk_row.addWidget(self._case_chk)
+        self._regex_chk = QCheckBox("Regex")
+        self._regex_chk.setStyleSheet(
+            f"color: {G700}; font: 12px; background: transparent;"
+        )
+        chk_row.addWidget(self._regex_chk)
+        chk_row.addStretch()
+        lay.addLayout(chk_row)
+        lay.addSpacing(6)
+
+        find_btn = _btn("Add All Matches", BLUE, BLUE_HOVER, h=32)
+        find_btn.clicked.connect(self._find_and_add_matches)
+        lay.addWidget(find_btn)
+        lay.addSpacing(4)
+
+        self._find_status_lbl = QLabel("")
+        self._find_status_lbl.setWordWrap(True)
+        self._find_status_lbl.setStyleSheet(
+            f"color: {G500}; font: 11px; border: none; background: transparent;"
+        )
+        lay.addWidget(self._find_status_lbl)
+        lay.addSpacing(20)
+
         # Clear controls
         self._rect_lbl = QLabel("No redactions on this page")
         self._rect_lbl.setStyleSheet(
@@ -374,8 +460,9 @@ class RedactTool(QWidget):
         lay.addWidget(self._rect_lbl)
         lay.addSpacing(8)
 
-        self._clear_page_btn = _btn("Clear This Page", WHITE, "#FEE2E2", RED,
-                                    border=True, h=32)
+        self._clear_page_btn = _btn(
+            "Clear This Page", WHITE, "#FEE2E2", RED, border=True, h=32
+        )
         self._clear_page_btn.setEnabled(False)
         self._clear_page_btn.clicked.connect(self._clear_page)
         lay.addWidget(self._clear_page_btn)
@@ -492,6 +579,7 @@ class RedactTool(QWidget):
         try:
             self._doc = fitz.open(path)
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.warning(self, "Error", f"Could not open PDF:\n{exc}")
             return
 
@@ -543,6 +631,70 @@ class RedactTool(QWidget):
     # Redaction controls
     # -----------------------------------------------------------------------
 
+    def _find_and_add_matches(self):
+        if not self._doc:
+            return
+        query = self._search_entry.text().strip()
+        if not query:
+            return
+
+        use_regex = self._regex_chk.isChecked()
+        case_sensitive = self._case_chk.isChecked()
+
+        if use_regex:
+            flags = 0 if case_sensitive else re.IGNORECASE
+            try:
+                pattern = re.compile(query, flags)
+            except re.error as exc:
+                self._find_status_lbl.setText(f"Invalid regex: {exc}")
+                self._find_status_lbl.setStyleSheet(
+                    f"color: {RED}; font: 11px; border: none; background: transparent;"
+                )
+                return
+
+        total = 0
+        for pg_idx in range(self._total_pages):
+            page = self._doc[pg_idx]
+            found = []
+            if use_regex:
+                text = page.get_text("text")
+                matched_strs = {
+                    m.group() for m in pattern.finditer(text) if m.group().strip()
+                }
+                for s in matched_strs:
+                    found.extend(page.search_for(s))
+            else:
+                found = page.search_for(query)
+                if case_sensitive:
+                    found = [
+                        r
+                        for r in found
+                        if page.get_text("text", clip=r).strip() == query
+                    ]
+
+            if found:
+                existing = list(self._all_rects.get(pg_idx, []))
+                for rect in found:
+                    t = (rect.x0, rect.y0, rect.x1, rect.y1)
+                    if t not in existing:
+                        existing.append(t)
+                        total += 1
+                self._all_rects[pg_idx] = existing
+
+        self._canvas.set_rects(self._all_rects.get(self._current_page, []))
+        self._update_rect_label()
+
+        if total == 0:
+            self._find_status_lbl.setText("No matches found.")
+            self._find_status_lbl.setStyleSheet(
+                f"color: {G500}; font: 11px; border: none; background: transparent;"
+            )
+        else:
+            self._find_status_lbl.setText(f"{total} match(es) added.")
+            self._find_status_lbl.setStyleSheet(
+                f"color: {EMERALD}; font: 11px; border: none; background: transparent;"
+            )
+
     def _on_rects_changed(self):
         self._save_current_rects()
         self._update_rect_label()
@@ -567,8 +719,9 @@ class RedactTool(QWidget):
         self._save_current_rects()
         total_rects = sum(len(v) for v in self._all_rects.values())
         if total_rects == 0:
-            QMessageBox.warning(self, "No redactions",
-                                "Draw at least one redaction box before saving.")
+            QMessageBox.warning(
+                self, "No redactions", "Draw at least one redaction box before saving."
+            )
             return
 
         out_name = self._out_entry.text().strip() or "redacted.pdf"
@@ -577,7 +730,8 @@ class RedactTool(QWidget):
 
         default_dir = str(Path(self._pdf_path).parent)
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Redacted PDF",
+            self,
+            "Save Redacted PDF",
             str(Path(default_dir) / out_name),
             "PDF Files (*.pdf)",
         )
@@ -586,30 +740,27 @@ class RedactTool(QWidget):
 
         self._save_btn.setEnabled(False)
         self._status_lbl.setText("Applying redactions...")
-        QApplication.processEvents()
 
-        try:
-            doc = fitz.open(self._pdf_path)
-            for page_idx, rects in self._all_rects.items():
-                page = doc[page_idx]
-                for (x0, y0, x1, y1) in rects:
-                    page.add_redact_annot(
-                        fitz.Rect(x0, y0, x1, y1),
-                        fill=(0, 0, 0),
-                    )
-                page.apply_redactions()
-            doc.save(out_path, garbage=3, deflate=True)
-            doc.close()
-            self._status_lbl.setText(f"Saved: {Path(out_path).name}")
-            self._status_lbl.setStyleSheet(
-                f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
-            )
-            self._modified = False
-        except Exception as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
-            self._status_lbl.setText("Save failed.")
-        finally:
-            self._save_btn.setEnabled(True)
+        self._worker = _RedactWorker(
+            self._pdf_path, out_path, dict(self._all_rects)
+        )
+        self._worker.finished.connect(self._on_save_done)
+        self._worker.failed.connect(self._on_save_failed)
+        self._worker.start()
+
+    def _on_save_done(self, out_path: str):
+        self._status_lbl.setText(f"Saved: {Path(out_path).name}")
+        self._status_lbl.setStyleSheet(
+            f"color: {EMERALD}; font: 12px; border: none; background: transparent;"
+        )
+        self._modified = False
+        self._save_btn.setEnabled(True)
+
+    def _on_save_failed(self, msg: str):
+        logger.error("save failed: %s", msg)
+        QMessageBox.critical(self, "Save failed", msg)
+        self._status_lbl.setText("Save failed.")
+        self._save_btn.setEnabled(True)
 
     # -----------------------------------------------------------------------
     # Drag and drop

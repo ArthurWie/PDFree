@@ -1,9 +1,8 @@
-"""Split Tool – PDF splitting with page preview and cut lines.
+"""Split Tool – PDF splitting with page preview and cut lines."""
 
-PySide6 port. Loaded by main.py when the user clicks "Split".
-"""
-
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -18,10 +17,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QApplication,
     QComboBox,
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QThread, Signal
 from PySide6.QtGui import (
     QPainter,
     QColor,
@@ -49,7 +47,7 @@ from colors import (
     G700,
     G900,
     WHITE,
-)
+    BLUE_MED,)
 from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
 
 try:
@@ -62,6 +60,8 @@ try:
     from pypdf.generic import RectangleObject
 except ImportError:
     PdfReader = PdfWriter = RectangleObject = None
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Colors (split_tool-specific)
@@ -151,6 +151,133 @@ class _PreviewCanvas(QWidget):
             st._show(st.current_page)
 
 
+class _SplitWorker(QThread):
+    progress = Signal(int)
+    status = Signal(str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, mode: str, pdf_path: str, **kwargs):
+        super().__init__()
+        self._mode = mode
+        self._pdf_path = pdf_path
+        self._kwargs = kwargs
+
+    def run(self):
+        import worker_semaphore
+
+        worker_semaphore.acquire()
+        try:
+            out_dir = self._kwargs.get("out_dir") or self._kwargs.get("output_dir", ".")
+            assert_file_writable(Path(out_dir) / "_probe")
+            backup_original(Path(self._pdf_path))
+            if self._mode == "chapters":
+                self._by_chapters()
+            else:
+                self._by_ranges()
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+        finally:
+            worker_semaphore.release()
+
+    def _by_chapters(self):
+        out_dir = self._kwargs["out_dir"]
+        top = self._kwargs["top"]
+        total_pages = self._kwargs["total_pages"]
+        base = Path(self._pdf_path).stem
+        n = len(top)
+
+        src = fitz.open(self._pdf_path)
+        try:
+            for i, entry in enumerate(top):
+                start_pg = entry[2] - 1
+                end_pg = (top[i + 1][2] - 2) if i + 1 < n else (total_pages - 1)
+                end_pg = max(start_pg, min(end_pg, total_pages - 1))
+
+                out = fitz.open()
+                try:
+                    out.insert_pdf(src, from_page=start_pg, to_page=end_pg)
+                    safe_title = (
+                        "".join(
+                            c if c.isalnum() or c in " _-" else "_" for c in entry[1]
+                        ).strip()
+                        or f"chapter_{i + 1}"
+                    )
+                    fname = f"{base}_{i + 1:02d}_{safe_title[:40]}.pdf"
+                    out.save(str(Path(out_dir) / fname))
+                finally:
+                    out.close()
+
+                self.progress.emit(int((i + 1) / n * 100))
+                self.status.emit(f"Chapter {i + 1}/{n}: {entry[1][:40]}")
+        finally:
+            src.close()
+
+        self.finished.emit(f"Done! {n} chapters saved.")
+
+    def _by_ranges(self):
+        ranges = self._kwargs["ranges"]
+        page_cuts = self._kwargs["page_cuts"]
+        output_dir = self._kwargs["output_dir"]
+        filename_template = self._kwargs["filename_template"]
+        A4_W, A4_H = 595.28, 841.89
+        base = Path(self._pdf_path).stem
+        n = len(ranges)
+
+        src = fitz.open(self._pdf_path)
+        try:
+            for i, (s, e) in enumerate(ranges):
+                out = fitz.open()
+                try:
+                    for pn in range(s - 1, e):
+                        src_page = src[pn]
+                        new_page = out.new_page(width=A4_W, height=A4_H)
+                        sr = src_page.rect
+                        scale = A4_W / sr.width if sr.width > 0 else 1.0
+
+                        if pn in page_cuts and s != e:
+                            cr = page_cuts[pn]
+                            cut_y = cr * sr.height
+                            first, last = pn == s - 1, pn == e - 1
+
+                            if first and last:
+                                new_page.show_pdf_page(new_page.rect, src, pn)
+                            elif last:
+                                clip = fitz.Rect(sr.x0, sr.y0, sr.x1, sr.y0 + cut_y)
+                                dest_h = min(cut_y * scale, A4_H)
+                                new_page.show_pdf_page(
+                                    fitz.Rect(0, 0, A4_W, dest_h), src, pn, clip=clip
+                                )
+                            elif first:
+                                clip = fitz.Rect(sr.x0, sr.y0 + cut_y, sr.x1, sr.y1)
+                                dest_h = min((sr.height - cut_y) * scale, A4_H)
+                                new_page.show_pdf_page(
+                                    fitz.Rect(0, 0, A4_W, dest_h), src, pn, clip=clip
+                                )
+                            else:
+                                new_page.show_pdf_page(new_page.rect, src, pn)
+                        else:
+                            new_page.show_pdf_page(new_page.rect, src, pn)
+
+                    tmpl = filename_template or f"{base}_part%d"
+                    fname = tmpl.replace("%d", str(i + 1))
+                    if not fname.lower().endswith(".pdf"):
+                        fname += ".pdf"
+                    out.save(str(Path(output_dir) / fname))
+                finally:
+                    out.close()
+
+                self.progress.emit(int((i + 1) / n * 100))
+                self.status.emit(f"Part {i + 1} of {n} created (p. {s}–{e})...")
+        finally:
+            src.close()
+
+        self.finished.emit(f"Done! {n} parts created.")
+
+
 # ===========================================================================
 # SplitTool
 # ===========================================================================
@@ -161,6 +288,7 @@ class SplitTool(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._worker = None
 
         if fitz is None or PdfReader is None:
             lay = QVBoxLayout(self)
@@ -258,7 +386,7 @@ class SplitTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("scissors", "#3B82F6", 22))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Split PDF")
@@ -285,7 +413,7 @@ class SplitTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            "background: rgba(249,250,251,128);"
+            f"background: {G100};"
             f" border: 2px dashed {G200};"
             " border-radius: 12px;"
         )
@@ -601,7 +729,7 @@ class SplitTool(QWidget):
 
     def _build_right_panel(self) -> QWidget:
         right = QWidget()
-        right.setStyleSheet("background: #EEF0F3; border: none;")
+        right.setStyleSheet(f"background: {G100}; border: none;")
         right_lay = QVBoxLayout(right)
         right_lay.setContentsMargins(0, 0, 0, 0)
         right_lay.setSpacing(0)
@@ -959,6 +1087,7 @@ class SplitTool(QWidget):
             self._show(0)
         except Exception as e:
             self.total_pages = 0
+            logger.exception("could not open pdf")
             QMessageBox.critical(self, "Error", f"Could not load PDF:\n{e}")
 
     # ==================================================================
@@ -1252,9 +1381,6 @@ class SplitTool(QWidget):
             self._thumb_layout.insertWidget(pos, frame)
             self._thumb_frames.append((frame, img_lbl))
 
-            if i % 10 == 0:
-                QApplication.processEvents()
-
     def _hl_thumb(self, idx):
         for i, (_, img_lbl) in enumerate(self._thumb_frames):
             if i == idx:
@@ -1367,9 +1493,11 @@ class SplitTool(QWidget):
             return
         top = [e for e in toc if e[0] == 1]
         if not top:
-            self._chapters_lbl.setText("No top-level bookmarks found. Cannot split by chapters.")
+            self._chapters_lbl.setText(
+                "No top-level bookmarks found. Cannot split by chapters."
+            )
             return
-        lines = [f"{i+1}. {e[1]}  (p. {e[2]})" for i, e in enumerate(top)]
+        lines = [f"{i + 1}. {e[1]}  (p. {e[2]})" for i, e in enumerate(top)]
         self._chapters_lbl.setText("\n".join(lines))
 
     def _quick_add_range(self):
@@ -1444,31 +1572,42 @@ class SplitTool(QWidget):
                 return
         self.split_btn.setEnabled(False)
         self.progress.show()
-        try:
-            self._do_split()
-        except Exception as ex:
-            QMessageBox.critical(self, "Error", f"Split failed:\n{ex}")
-            self.status_lbl.setText("Error during split.")
-        finally:
-            self.split_btn.setEnabled(True)
+        self.progress.setValue(0)
+
+        self._worker = _SplitWorker(
+            "ranges",
+            self.pdf_path,
+            ranges=list(self.ranges),
+            page_cuts=dict(self.page_cuts),
+            output_dir=self.output_dir,
+            filename_template=self.filename_entry.text().strip(),
+        )
+        self._worker.progress.connect(self.progress.setValue)
+        self._worker.status.connect(self.status_lbl.setText)
+        self._worker.finished.connect(self._on_split_done)
+        self._worker.failed.connect(self._on_split_failed)
+        self._worker.start()
 
     def _split_by_chapters(self):
         if fitz is None:
-            QMessageBox.critical(self, "Missing dependency", "PyMuPDF (fitz) is not installed.")
+            QMessageBox.critical(
+                self, "Missing dependency", "PyMuPDF (fitz) is not installed."
+            )
             return
         try:
             doc = fitz.open(self.pdf_path)
             toc = doc.get_toc()
+            total_pages = doc.page_count
             doc.close()
         except Exception as exc:
+            logger.exception("could not open pdf")
             QMessageBox.critical(self, "Error", f"Could not read PDF:\n{exc}")
             return
 
         top = [e for e in toc if e[0] == 1]
         if not top:
             QMessageBox.warning(
-                self, "No Chapters",
-                "This PDF has no top-level bookmarks to split by."
+                self, "No Chapters", "This PDF has no top-level bookmarks to split by."
             )
             return
 
@@ -1479,107 +1618,30 @@ class SplitTool(QWidget):
         self.split_btn.setEnabled(False)
         self.progress.show()
         self.progress.setValue(0)
-        QApplication.processEvents()
 
-        try:
-            src = fitz.open(self.pdf_path)
-            base = Path(self.pdf_path).stem
-            total_pages = src.page_count
-            n = len(top)
+        self._worker = _SplitWorker(
+            "chapters",
+            self.pdf_path,
+            out_dir=out_dir,
+            top=top,
+            total_pages=total_pages,
+        )
+        self._worker.progress.connect(self.progress.setValue)
+        self._worker.status.connect(self.status_lbl.setText)
+        self._worker.finished.connect(self._on_split_done)
+        self._worker.failed.connect(self._on_split_failed)
+        self._worker.start()
 
-            for i, entry in enumerate(top):
-                start_pg = entry[2] - 1  # 0-indexed
-                end_pg = (top[i + 1][2] - 2) if i + 1 < n else (total_pages - 1)
-                end_pg = max(start_pg, min(end_pg, total_pages - 1))
+    def _on_split_done(self, msg: str):
+        self.status_lbl.setText(msg)
+        self.split_btn.setEnabled(True)
+        self.progress.hide()
 
-                out = fitz.open()
-                try:
-                    out.insert_pdf(src, from_page=start_pg, to_page=end_pg)
-                    safe_title = "".join(
-                        c if c.isalnum() or c in " _-" else "_"
-                        for c in entry[1]
-                    ).strip() or f"chapter_{i+1}"
-                    fname = f"{base}_{i+1:02d}_{safe_title[:40]}.pdf"
-                    out.save(str(Path(out_dir) / fname))
-                finally:
-                    out.close()
-
-                self.progress.setValue(int((i + 1) / n * 100))
-                self.status_lbl.setText(f"Chapter {i+1}/{n}: {entry[1][:40]}")
-                QApplication.processEvents()
-
-            src.close()
-            self.status_lbl.setText(f"Done! {n} chapters saved.")
-        except Exception as exc:
-            QMessageBox.critical(self, "Error", f"Split failed:\n{exc}")
-            self.status_lbl.setText("Error during split.")
-        finally:
-            self.split_btn.setEnabled(True)
-            self.progress.hide()
-
-    def _do_split(self):
-        if fitz is None:
-            QMessageBox.critical(
-                self, "Missing dependency", "PyMuPDF (fitz) is not installed."
-            )
-            return
-
-        A4_W, A4_H = 595.28, 841.89
-        src = fitz.open(self.pdf_path)
-        try:
-            base = Path(self.pdf_path).stem
-            n = len(self.ranges)
-            self.progress.setValue(0)
-
-            for i, (s, e) in enumerate(self.ranges):
-                out = fitz.open()
-                try:
-                    for pn in range(s - 1, e):
-                        src_page = src[pn]
-                        new_page = out.new_page(width=A4_W, height=A4_H)
-                        sr = src_page.rect
-                        scale = A4_W / sr.width if sr.width > 0 else 1.0
-
-                        if pn in self.page_cuts and s != e:
-                            cr = self.page_cuts[pn]
-                            cut_y = cr * sr.height  # fitz y from top
-                            first, last = pn == s - 1, pn == e - 1
-
-                            if first and last:
-                                new_page.show_pdf_page(new_page.rect, src, pn)
-                            elif last:
-                                # Top portion (above cut line) → placed at top of A4
-                                clip = fitz.Rect(sr.x0, sr.y0, sr.x1, sr.y0 + cut_y)
-                                dest_h = min(cut_y * scale, A4_H)
-                                new_page.show_pdf_page(
-                                    fitz.Rect(0, 0, A4_W, dest_h), src, pn, clip=clip
-                                )
-                            elif first:
-                                # Bottom portion (below cut line) → placed at top of A4
-                                clip = fitz.Rect(sr.x0, sr.y0 + cut_y, sr.x1, sr.y1)
-                                dest_h = min((sr.height - cut_y) * scale, A4_H)
-                                new_page.show_pdf_page(
-                                    fitz.Rect(0, 0, A4_W, dest_h), src, pn, clip=clip
-                                )
-                            else:
-                                new_page.show_pdf_page(new_page.rect, src, pn)
-                        else:
-                            new_page.show_pdf_page(new_page.rect, src, pn)
-
-                    tmpl = self.filename_entry.text().strip() or f"{base}_part%d"
-                    fname = tmpl.replace("%d", str(i + 1))
-                    if not fname.lower().endswith(".pdf"):
-                        fname += ".pdf"
-                    out.save(str(Path(self.output_dir) / fname))
-                finally:
-                    out.close()
-
-                self.progress.setValue(int((i + 1) / n * 100))
-                self.status_lbl.setText(f"Part {i + 1} of {n} created (p. {s}–{e})...")
-                QApplication.processEvents()
-        finally:
-            src.close()
-        self.status_lbl.setText(f"Done! {n} parts created.")
+    def _on_split_failed(self, msg: str):
+        QMessageBox.critical(self, "Error", f"Split failed:\n{msg}")
+        self.status_lbl.setText("Error during split.")
+        self.split_btn.setEnabled(True)
+        self.progress.hide()
 
     # ==================================================================
     # CLEANUP
