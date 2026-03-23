@@ -3328,6 +3328,10 @@ class ViewTool(QWidget):
     # ==================================================================
 
     def _show_page(self, idx: int):
+        if self._continuous_pane is not None:
+            self._continuous_pane.scroll_to_page(idx)
+            self._page_entry.setText(str(idx + 1))
+            return
         if not self.doc or idx < 0 or idx >= self.total_pages:
             return
         self.current_page = idx
