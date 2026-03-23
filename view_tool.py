@@ -1501,6 +1501,7 @@ class ViewTool(QWidget):
 
         # -- View state --
         self._view_mode = ViewMode.SINGLE
+        self._continuous_pane: "_ContinuousPane | None" = None
         self._highlighted_thumb_frame = None
 
         # -- Coordinate mapping (set during render) --
@@ -1700,6 +1701,15 @@ class ViewTool(QWidget):
         self._btn_mode_twoup.setStyleSheet(_mode_style)
         self._btn_mode_twoup.clicked.connect(self._set_mode_twoup)
         mode_lay.addWidget(self._btn_mode_twoup)
+
+        self._btn_mode_continuous = QPushButton("≡")
+        self._btn_mode_continuous.setCheckable(True)
+        self._btn_mode_continuous.setChecked(False)
+        self._btn_mode_continuous.setFixedHeight(32)
+        self._btn_mode_continuous.setToolTip("Continuous scroll")
+        self._btn_mode_continuous.setStyleSheet(_mode_style)
+        self._btn_mode_continuous.clicked.connect(self._set_mode_continuous)
+        mode_lay.addWidget(self._btn_mode_continuous)
 
         right_lay.addWidget(mode_grp)
 
@@ -3435,6 +3445,8 @@ class ViewTool(QWidget):
         self._view_mode = ViewMode.SINGLE
         self._btn_mode_single.setChecked(True)
         self._btn_mode_twoup.setChecked(False)
+        self._btn_mode_continuous.setChecked(False)
+        self._teardown_continuous()
         if self.doc:
             self._canvas.set_pixmap(self._canvas._pixmap)
             self._render_page()
@@ -3443,8 +3455,42 @@ class ViewTool(QWidget):
         self._view_mode = ViewMode.TWO_UP
         self._btn_mode_single.setChecked(False)
         self._btn_mode_twoup.setChecked(True)
+        self._btn_mode_continuous.setChecked(False)
+        self._teardown_continuous()
         if self.doc:
             self._render_page()
+
+    def _set_mode_continuous(self) -> None:
+        if self._continuous_pane is not None:
+            return  # already active
+        self._view_mode = ViewMode.CONTINUOUS
+        self._btn_mode_single.setChecked(False)
+        self._btn_mode_twoup.setChecked(False)
+        self._btn_mode_continuous.setChecked(True)
+        if not self.doc:
+            return
+        pane = self.active_pane
+        pane._scroll_area.hide()
+        zoom = self._effective_zoom() if self.zoom in (FIT_PAGE, FIT_WIDTH) else self.zoom
+        self._continuous_pane = _ContinuousPane(pane.pdf_path, zoom=zoom, parent=pane)
+        pane.layout().insertWidget(0, self._continuous_pane)
+        self._continuous_pane.page_changed.connect(self._on_continuous_page_changed)
+        QTimer.singleShot(50, lambda: self._continuous_pane.scroll_to_page(self.current_page))
+
+    def _teardown_continuous(self) -> None:
+        if self._continuous_pane is None:
+            return
+        page = self._continuous_pane.current_page()
+        self._continuous_pane.page_changed.disconnect()
+        self._continuous_pane.setParent(None)
+        self._continuous_pane.deleteLater()
+        self._continuous_pane = None
+        self.active_pane._scroll_area.show()
+        self._show_page(page)
+
+    def _on_continuous_page_changed(self, page: int) -> None:
+        self._page_entry.setText(str(page + 1))
+        self._highlight_thumb(page)
 
     def _zoom_fit_width(self):
         self.zoom = FIT_WIDTH
@@ -4677,6 +4723,9 @@ class ViewTool(QWidget):
         self._btn_split.setChecked(False)
 
     def cleanup(self):
+        if self._continuous_pane is not None:
+            self._continuous_pane.close()
+            self._continuous_pane = None
         if self._split_right_pane is not None:
             self._split_right_pane.cleanup()
             self._split_right_pane = None
