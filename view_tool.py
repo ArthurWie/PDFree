@@ -186,6 +186,7 @@ MAX_UNDO = 30
 class ViewMode:
     SINGLE = "single"
     TWO_UP = "two_up"
+    CONTINUOUS = "continuous"
 
 
 # ---------------------------------------------------------------------------
