@@ -3030,10 +3030,46 @@ def _on_update_available(tag: str, url: str) -> None:
         webbrowser.open(url)
 
 
+def _install_crash_reporter(app: "QApplication") -> None:
+    import traceback
+
+    _original_hook = sys.excepthook
+
+    def _hook(exc_type, exc_value, exc_tb):
+        logger.critical(
+            "Uncaught exception",
+            exc_info=(exc_type, exc_value, exc_tb),
+        )
+        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+
+        msg = QMessageBox()
+        msg.setWindowTitle("PDFree crashed")
+        msg.setIcon(QMessageBox.Icon.Critical)
+        msg.setText(
+            "PDFree encountered an unexpected error.\n\n"
+            "Click 'Copy details' to copy the error to your clipboard, "
+            "then paste it into a GitHub issue."
+        )
+        msg.setDetailedText(tb_text)
+        copy_btn = msg.addButton("Copy details", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+
+        if msg.clickedButton() is copy_btn:
+            QApplication.clipboard().setText(
+                f"PDFree crash report\n{'=' * 40}\n{tb_text}"
+            )
+
+        _original_hook(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _hook
+
+
 if __name__ == "__main__":
     from updater import UpdateChecker
 
     app = QApplication(sys.argv)
+    _install_crash_reporter(app)
     _install_translator(app)
     app.setStyle("Fusion")
     app.setStyleSheet(_scrollbar_css())
