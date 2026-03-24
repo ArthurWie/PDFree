@@ -50,7 +50,9 @@ jobs:
         run: pip-audit
 
       - name: Run tests
-        run: xvfb-run -a pytest --tb=short -q --cov=. --cov-report=term-missing --cov-fail-under=28
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest --tb=short -q --cov=. --cov-report=term-missing --cov-fail-under=28
 
 
   # ──────────────────────────────────────────────
