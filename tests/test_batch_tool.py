@@ -267,7 +267,27 @@ def test_run_pdfa_produces_output(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_batch_item_worker_exists():
+def test_batch_item_worker_acquires_semaphore(tmp_path, monkeypatch):
     from batch_tool import _BatchItemWorker
+    import worker_semaphore as ws
+    from PySide6.QtCore import Qt
 
-    assert _BatchItemWorker is not None
+    acquired = []
+    released = []
+    monkeypatch.setattr(ws, "acquire", lambda: acquired.append(1))
+    monkeypatch.setattr(ws, "release", lambda: released.append(1))
+
+    src = str(tmp_path / "src.pdf")
+    dst = str(tmp_path / "dst.pdf")
+    _make_pdf(src)
+
+    done_indices = []
+    w = _BatchItemWorker(0, src, dst, "compress", {"preset_idx": 0})
+    w.done.connect(lambda idx: done_indices.append(idx), Qt.DirectConnection)
+    w.start()
+    w.wait(10000)
+
+    assert len(acquired) == 1
+    assert len(released) == 1
+    assert done_indices == [0]
+    assert Path(dst).exists()

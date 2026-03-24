@@ -387,6 +387,7 @@ class _BatchCoordinator(QObject):
             w.failed.connect(self._item_failed)
             self._workers.append(w)
             w.start()
+            w.finished.connect(w.deleteLater)
 
     def _item_done(self, index: int) -> None:
         self._on_done(index)
@@ -1047,8 +1048,7 @@ class BatchTool(QWidget):
         if isinstance(self._worker, _BatchCoordinator):
             for w in self._worker._workers:
                 if w.isRunning():
-                    w.quit()
-                    w.wait(3000)
+                    w.wait(5000)
         elif self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(3000)
