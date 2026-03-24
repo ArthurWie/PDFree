@@ -42,6 +42,7 @@ from colors import (
 )
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap, _make_back_button
+from widgets import PreviewCanvas
 
 try:
     import fitz
@@ -86,13 +87,11 @@ def _pdf_box_to_canvas(pdf_box, page_h: float, scale: float):
     return cx0, cy0, cx1, cy1
 
 
-class _PreviewCanvas(QWidget):
+class _PreviewCanvas(PreviewCanvas):
     """Renders a PDF page with the planned signature box overlaid."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._pixmap = None
         self._sig_box = None  # (cx0, cy0, cx1, cy1) in canvas pixels
 
     def set_content(self, pixmap, sig_box):

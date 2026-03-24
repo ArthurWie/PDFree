@@ -50,6 +50,7 @@ from colors import (
     BLUE_MED,
 )
 from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
+from widgets import PreviewCanvas
 
 try:
     import fitz
@@ -99,12 +100,10 @@ def _btn(text, bg, hover, text_color=WHITE, border=False, h=38, w=None) -> QPush
 # ===========================================================================
 
 
-class _PreviewCanvas(QWidget):
+class _PreviewCanvas(PreviewCanvas):
     def __init__(self, split_tool: "SplitTool", parent=None):
         super().__init__(parent)
         self._st = split_tool
-        self.setMinimumSize(300, 300)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
 
     def paintEvent(self, _event):

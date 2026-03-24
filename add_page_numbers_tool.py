@@ -49,6 +49,7 @@ from colors import (
 )
 from icons import svg_pixmap
 from utils import _fitz_pix_to_qpixmap
+from widgets import PreviewCanvas
 
 try:
     import fitz
@@ -190,56 +191,6 @@ def _number_rect(
     # Top Left
     r = fitz.Rect(margin, margin, margin + box_w, margin + box_h)
     return r, align_left
-
-
-# ===========================================================================
-# Preview Canvas
-# ===========================================================================
-
-
-class _PreviewCanvas(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._pixmap: QPixmap | None = None
-        self.setMinimumSize(300, 300)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
-    def set_pixmap(self, pm: QPixmap | None):
-        self._pixmap = pm
-        self.update()
-
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), QColor(G100))
-
-        if self._pixmap is None or self._pixmap.isNull():
-            p.setPen(QColor(G400))
-            p.drawText(
-                self.rect(),
-                Qt.AlignmentFlag.AlignCenter,
-                "Load a PDF to see\nthe page number preview",
-            )
-            return
-
-        pw, ph = self._pixmap.width(), self._pixmap.height()
-        cw, ch = self.width(), self.height()
-        scale = min((cw - 48) / pw, (ch - 48) / ph, 1.0)
-        dw, dh = int(pw * scale), int(ph * scale)
-        x = (cw - dw) // 2
-        y = (ch - dh) // 2
-
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(0, 0, 0, 28))
-        p.drawRoundedRect(x + 4, y + 4, dw, dh, 4, 4)
-
-        scaled = self._pixmap.scaled(
-            dw,
-            dh,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        p.drawPixmap(x, y, scaled)
 
 
 # ===========================================================================
@@ -549,7 +500,7 @@ class AddPageNumbersTool(QWidget):
 
         v.addWidget(toolbar)
 
-        self._canvas = _PreviewCanvas()
+        self._canvas = PreviewCanvas()
         v.addWidget(self._canvas, 1)
         return right
 

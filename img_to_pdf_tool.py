@@ -51,6 +51,7 @@ from colors import (
     BLUE_MED,
 )
 from icons import svg_pixmap
+from widgets import PreviewCanvas
 
 try:
     import fitz
@@ -241,19 +242,12 @@ class _ImgRow(QFrame):
 # ===========================================================================
 
 
-class _PreviewCanvas(QWidget):
+class _PreviewCanvas(PreviewCanvas):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pixmap: QPixmap | None = None
         self._page_w: float = 595  # A4 portrait default (points)
         self._page_h: float = 842
         self._margin: int = 18  # Small default
-        self.setMinimumSize(300, 300)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
-    def set_pixmap(self, pm: QPixmap | None):
-        self._pixmap = pm
-        self.update()
 
     def set_page_size(self, w: float, h: float):
         self._page_w = w
