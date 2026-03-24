@@ -32,7 +32,9 @@ _ASSET_PATTERNS = {
 }
 
 
-def _pick_asset_url(assets: list, platform: str = _sys.platform) -> str | None:
+def _pick_asset_url(assets: list, platform: str | None = None) -> str | None:
+    if platform is None:
+        platform = _sys.platform
     suffix = _ASSET_PATTERNS.get(platform)
     if not suffix:
         return None
