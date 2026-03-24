@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QApplication,
     QCheckBox,
+    QRadioButton,
     QComboBox,
     QTextEdit,
     QSplitter,
@@ -1621,6 +1622,10 @@ class ViewTool(QWidget):
         save_btn.clicked.connect(self._save_pdf)
         left_lay.addWidget(save_btn)
 
+        save_as_btn = _hbtn("Save As")
+        save_as_btn.clicked.connect(lambda: self._save_pdf(force_dialog=True))
+        left_lay.addWidget(save_as_btn)
+
         print_btn = _hbtn("Print")
         print_btn.clicked.connect(self._print_pdf)
         left_lay.addWidget(print_btn)
@@ -2912,6 +2917,7 @@ class ViewTool(QWidget):
         shortcuts = [
             ("Ctrl+F", self._toggle_search),
             ("Ctrl+S", self._save_pdf),
+            ("Ctrl+Shift+S", lambda: self._save_pdf(force_dialog=True)),
             ("Ctrl+C", self._copy_selection),
             ("Ctrl+Z", self._undo),
             ("Ctrl+Y", self._redo),
@@ -4332,6 +4338,18 @@ class ViewTool(QWidget):
                 lw.show()
                 self._form_widgets.append(lw)
 
+            elif widget.field_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+                rb = QRadioButton(self._canvas)
+                rb.setGeometry(int(x0), int(y0), h, h)
+                on_val = widget.on_state()
+                rb.setChecked(widget.field_value == on_val)
+                rb._pdf_widget = widget
+                rb.toggled.connect(
+                    lambda checked, wgt=widget, b=rb: self._update_radio(wgt, b) if checked else None
+                )
+                rb.show()
+                self._form_widgets.append(rb)
+
             elif (
                 widget.field_type == fitz.PDF_WIDGET_TYPE_BUTTON
                 and widget.field_flags
@@ -4363,6 +4381,21 @@ class ViewTool(QWidget):
         widget.update()
         self._modified = True
 
+    def _update_radio(self, widget, btn) -> None:
+        if not btn.isChecked():
+            return
+        self._push_undo()
+        page = self.doc[self.current_page]
+        target_rect = fitz.Rect(widget.rect)
+        for w in page.widgets():
+            if w.field_name == widget.field_name:
+                if w.rect == target_rect:
+                    w.field_value = w.on_state()
+                else:
+                    w.field_value = "Off"
+                w.update()
+        self._modified = True
+
     def _update_combo(self, combo, val):
         self._push_undo()
         widget = combo._pdf_widget
@@ -4384,22 +4417,26 @@ class ViewTool(QWidget):
     # SAVE & PRINT
     # ==================================================================
 
-    def _save_pdf(self):
+    def _save_pdf(self, force_dialog: bool = False):
         if not self.doc:
             return
-        initial = Path(self.pdf_path).name if self.pdf_path else "output.pdf"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF", initial, "PDF Files (*.pdf)"
-        )
-        if not path:
-            return
+        if force_dialog or not self.pdf_path:
+            initial = Path(self.pdf_path).name if self.pdf_path else "output.pdf"
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save PDF As", initial, "PDF Files (*.pdf)"
+            )
+            if not path:
+                return
+        else:
+            path = self.pdf_path
         try:
             if path == self.pdf_path:
                 self.doc.save(path, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
             else:
                 self.doc.save(path)
             self._modified = False
-            QMessageBox.information(self, "Saved", f"PDF saved to:\n{path}")
+            if force_dialog:
+                QMessageBox.information(self, "Saved", f"PDF saved to:\n{path}")
         except Exception as e:
             logger.exception("save failed")
             QMessageBox.critical(self, "Error", f"Could not save:\n{e}")
