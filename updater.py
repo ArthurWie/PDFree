@@ -109,7 +109,7 @@ class UpdateChecker(QThread):
                 data = json.loads(resp.read().decode())
             tag = data.get("tag_name", "")
             html_url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases")
-            assets = data.get("assets", [])
+            assets = data.get("assets") or []
             download_url = _pick_asset_url(assets) or html_url
             if tag and _is_newer(tag):
                 self.update_available.emit(tag, download_url)

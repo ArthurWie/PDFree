@@ -67,3 +67,42 @@ def test_update_checker_emits_asset_url(monkeypatch):
     tag, url = received[0]
     assert tag == "v99.0.0"
     assert url == "https://example.com/PDFree_Setup.exe"
+
+
+def test_update_checker_falls_back_to_html_url(monkeypatch):
+    """When no asset matches the current platform, emit html_url instead."""
+    from updater import UpdateChecker
+    import updater
+
+    monkeypatch.setattr(updater, "_due_for_check", lambda: True)
+    monkeypatch.setattr(updater, "_write_stamp", lambda: None)
+
+    # Release with no assets
+    fake_release = {
+        "tag_name": "v99.0.0",
+        "html_url": "https://github.com/owner/repo/releases/tag/v99.0.0",
+        "assets": [],
+    }
+
+    import json
+    from unittest.mock import MagicMock
+    fake_resp = MagicMock()
+    fake_resp.read.return_value = json.dumps(fake_release).encode()
+    fake_resp.__enter__ = lambda s: s
+    fake_resp.__exit__ = MagicMock(return_value=False)
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: fake_resp)
+
+    import sys
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    received = []
+    checker = UpdateChecker()
+    checker.update_available.connect(lambda tag, url: received.append((tag, url)))
+    checker.run()
+
+    assert len(received) == 1
+    tag, url = received[0]
+    assert tag == "v99.0.0"
+    assert url == "https://github.com/owner/repo/releases/tag/v99.0.0"
