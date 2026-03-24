@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QSpinBox,
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QObject, QThread, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
 from colors import (
@@ -334,6 +334,73 @@ class _BatchWorker(QThread):
         if entry is None:
             raise ValueError(f"Unknown operation: {self._op_id}")
         entry["run"](src, dst, self._settings)
+
+
+class _BatchItemWorker(QThread):
+    done = Signal(int)
+    failed = Signal(int, str)
+
+    def __init__(self, index: int, src: str, dst: str, op_id: str, settings: dict):
+        super().__init__()
+        self._index = index
+        self._src = src
+        self._dst = dst
+        self._op_id = op_id
+        self._settings = settings
+
+    def run(self) -> None:
+        import worker_semaphore
+
+        worker_semaphore.acquire()
+        try:
+            entry = BATCH_REGISTRY[self._op_id]
+            entry["run"](self._src, self._dst, self._settings)
+            self.done.emit(self._index)
+        except Exception as exc:
+            logger.exception("batch item failed: %s", self._src)
+            self.failed.emit(self._index, str(exc))
+        finally:
+            worker_semaphore.release()
+
+
+class _BatchCoordinator(QObject):
+    all_done = Signal()
+
+    def __init__(self, tasks: list, op_id: str, settings: dict, out_dir: str,
+                 on_done, on_failed):
+        super().__init__()
+        self._tasks = tasks
+        self._op_id = op_id
+        self._settings = settings
+        self._out_dir = out_dir
+        self._on_done = on_done
+        self._on_failed = on_failed
+        self._workers: list[_BatchItemWorker] = []
+        self._pending = len(tasks)
+
+    def start(self) -> None:
+        for i, src in enumerate(self._tasks):
+            stem = Path(src).stem
+            dst = str(Path(self._out_dir) / f"{stem}_batch.pdf")
+            w = _BatchItemWorker(i, src, dst, self._op_id, self._settings)
+            w.done.connect(self._item_done)
+            w.failed.connect(self._item_failed)
+            self._workers.append(w)
+            w.start()
+            w.finished.connect(w.deleteLater)
+
+    def _item_done(self, index: int) -> None:
+        self._on_done(index)
+        self._check_complete()
+
+    def _item_failed(self, index: int, msg: str) -> None:
+        self._on_failed(index, msg)
+        self._check_complete()
+
+    def _check_complete(self) -> None:
+        self._pending -= 1
+        if self._pending <= 0:
+            self.all_done.emit()
 
 
 # ---------------------------------------------------------------------------
@@ -914,9 +981,14 @@ class BatchTool(QWidget):
         self._done_count = 0
         self._status_lbl.setText("Running…")
 
-        self._worker = _BatchWorker(list(self._files), op_id, settings, out_dir)
-        self._worker.file_done.connect(self._on_file_done)
-        self._worker.file_failed.connect(self._on_file_failed)
+        self._worker = _BatchCoordinator(
+            list(self._files),
+            op_id,
+            settings,
+            out_dir,
+            on_done=self._on_file_done,
+            on_failed=self._on_file_failed,
+        )
         self._worker.all_done.connect(self._on_all_done)
         self._worker.start()
 
@@ -971,6 +1043,12 @@ class BatchTool(QWidget):
     # -----------------------------------------------------------------------
 
     def cleanup(self) -> None:
-        if self._worker and self._worker.isRunning():
+        if self._worker is None:
+            return
+        if isinstance(self._worker, _BatchCoordinator):
+            for w in self._worker._workers:
+                if w.isRunning():
+                    w.wait(5000)
+        elif self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(3000)

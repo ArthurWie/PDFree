@@ -8,6 +8,7 @@ file stored next to the application log.
 
 import json
 import logging
+import sys as _sys
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone, timedelta
@@ -23,6 +24,22 @@ logger = logging.getLogger(__name__)
 _CHECK_INTERVAL = timedelta(hours=24)
 _API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 _STAMP_FILE = "last_update_check.txt"
+
+_ASSET_PATTERNS = {
+    "win32":  "_Setup.exe",
+    "darwin": ".dmg",
+    "linux":  ".AppImage",
+}
+
+
+def _pick_asset_url(assets: list, platform: str = _sys.platform) -> str | None:
+    suffix = _ASSET_PATTERNS.get(platform)
+    if not suffix:
+        return None
+    for asset in assets:
+        if asset.get("name", "").endswith(suffix):
+            return asset.get("browser_download_url")
+    return None
 
 
 def _parse_version(tag: str) -> tuple[int, ...]:
@@ -91,9 +108,11 @@ class UpdateChecker(QThread):
             with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 — URL is a hardcoded https:// constant, never user-supplied
                 data = json.loads(resp.read().decode())
             tag = data.get("tag_name", "")
-            url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases")
+            html_url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases")
+            assets = data.get("assets") or []
+            download_url = _pick_asset_url(assets) or html_url
             if tag and _is_newer(tag):
-                self.update_available.emit(tag, url)
+                self.update_available.emit(tag, download_url)
         except urllib.error.URLError:
             pass  # offline or network error — silently skip
         except Exception:
