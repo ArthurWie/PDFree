@@ -1,10 +1,14 @@
 """Tests for batch_tool pure operation functions."""
 
+import tempfile
 from pathlib import Path
 
 import pytest
 
 fitz = pytest.importorskip("fitz", reason="PyMuPDF not installed")
+
+_tmp_dir = tempfile.mkdtemp()
+PLAIN_PDF = str(Path(_tmp_dir) / "plain.pdf")
 
 
 def _make_pdf(path: str, pages: int = 2) -> None:
@@ -14,6 +18,9 @@ def _make_pdf(path: str, pages: int = 2) -> None:
         page.insert_text((72, 72), f"Page {i + 1}")
     doc.save(path)
     doc.close()
+
+
+_make_pdf(PLAIN_PDF)
 
 
 # ---------------------------------------------------------------------------
@@ -223,3 +230,33 @@ def test_batch_registry_all_have_run_fn():
     for op_id, entry in BATCH_REGISTRY.items():
         assert callable(entry["run"]), f"{op_id} missing callable 'run'"
         assert "label" in entry, f"{op_id} missing 'label'"
+
+
+# ---------------------------------------------------------------------------
+# _run_watermark
+# ---------------------------------------------------------------------------
+
+
+def test_run_watermark_applies_text(tmp_path):
+    from batch_tool import _run_watermark
+
+    dst = str(tmp_path / "out.pdf")
+    _run_watermark(PLAIN_PDF, dst, {"text": "TEST"})
+    assert Path(dst).exists()
+    doc = fitz.open(dst)
+    assert doc.page_count >= 1
+    doc.close()
+
+
+# ---------------------------------------------------------------------------
+# _run_pdf_to_pdfa
+# ---------------------------------------------------------------------------
+
+
+def test_run_pdfa_produces_output(tmp_path):
+    from batch_tool import _run_pdf_to_pdfa
+
+    dst = str(tmp_path / "out.pdf")
+    _run_pdf_to_pdfa(PLAIN_PDF, dst, {"conformance": "PDF/A-2b"})
+    assert Path(dst).exists()
+    assert Path(dst).stat().st_size > 0

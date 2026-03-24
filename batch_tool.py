@@ -248,7 +248,9 @@ def _run_pdf_to_pdfa(src: str, dst: str, kwargs: dict) -> None:
 
     conformance = kwargs.get("conformance", "PDF/A-2b")
     part_map = {"PDF/A-1b": ("1", "B"), "PDF/A-2b": ("2", "B"), "PDF/A-3b": ("3", "B")}
-    part, conf = part_map.get(conformance, ("2", "B"))
+    if conformance not in part_map:
+        raise ValueError(f"Unsupported conformance level: {conformance!r}")
+    part, conf = part_map[conformance]
     convert_to_pdfa(src, dst, part=part, conformance=conf)
 
 
