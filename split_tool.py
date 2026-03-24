@@ -1,27 +1,56 @@
-"""Split Tool – PDF splitting with page preview and cut lines.
+"""Split Tool – PDF splitting with page preview and cut lines."""
 
-PySide6 port. Loaded by main.py when the user clicks "Split".
-"""
-
+import logging
 from pathlib import Path
+from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
-    QWidget, QFrame, QLabel, QPushButton, QLineEdit,
-    QScrollArea, QHBoxLayout, QVBoxLayout, QGridLayout,
-    QFileDialog, QMessageBox, QProgressBar, QSizePolicy,
-    QApplication, QComboBox,
+    QWidget,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QLineEdit,
+    QScrollArea,
+    QHBoxLayout,
+    QVBoxLayout,
+    QFileDialog,
+    QMessageBox,
+    QProgressBar,
+    QSizePolicy,
+    QComboBox,
 )
-from PySide6.QtCore import Qt, QEvent, QObject, QSize
+from PySide6.QtCore import Qt, QSize, QThread, Signal
 from PySide6.QtGui import (
-    QPainter, QColor, QPixmap, QPen, QPainterPath,
-    QFont, QCursor, QKeySequence, QShortcut, QIcon,
+    QPainter,
+    QColor,
+    QPixmap,
+    QPen,
+    QPainterPath,
+    QFont,
+    QCursor,
+    QKeySequence,
+    QShortcut,
+    QIcon,
 )
-from icons import svg_pixmap, svg_icon
+from icons import svg_pixmap
 from colors import (
-    BLUE, BLUE_HOVER, GREEN, GREEN_HOVER, RED,
-    G100, G200, G300, G400, G500, G700, G900, WHITE,
+    BLUE,
+    BLUE_HOVER,
+    GREEN,
+    GREEN_HOVER,
+    RED,
+    G100,
+    G200,
+    G300,
+    G400,
+    G500,
+    G700,
+    G900,
+    WHITE,
+    BLUE_MED,
 )
 from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
+from widgets import PreviewCanvas
 
 try:
     import fitz
@@ -34,15 +63,18 @@ try:
 except ImportError:
     PdfReader = PdfWriter = RectangleObject = None
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Colors (split_tool-specific)
 # ---------------------------------------------------------------------------
-CUT_ACTIVE   = "#DC2626"
+CUT_ACTIVE = "#DC2626"
 CUT_INACTIVE = "#CBD5E1"
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _btn(text, bg, hover, text_color=WHITE, border=False, h=38, w=None) -> QPushButton:
     b = QPushButton(text)
@@ -54,7 +86,7 @@ def _btn(text, bg, hover, text_color=WHITE, border=False, h=38, w=None) -> QPush
         QPushButton {{
             background: {bg}; color: {text_color};
             {border_s} border-radius: 6px;
-            font: {'bold ' if bg == BLUE or bg == GREEN else ''}13px 'Segoe UI';
+            font: {"bold " if bg == BLUE or bg == GREEN else ""}13px 'Segoe UI';
             padding: 0 12px;
         }}
         QPushButton:hover {{ background: {hover}; }}
@@ -67,12 +99,11 @@ def _btn(text, bg, hover, text_color=WHITE, border=False, h=38, w=None) -> QPush
 # Preview Canvas
 # ===========================================================================
 
-class _PreviewCanvas(QWidget):
+
+class _PreviewCanvas(PreviewCanvas):
     def __init__(self, split_tool: "SplitTool", parent=None):
         super().__init__(parent)
         self._st = split_tool
-        self.setMinimumSize(300, 300)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
 
     def paintEvent(self, _event):
@@ -83,8 +114,11 @@ class _PreviewCanvas(QWidget):
         if st._preview_pixmap is None:
             p.setPen(QColor(G400))
             p.setFont(QFont("Segoe UI", 16))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Load a PDF to see\npage preview here")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Load a PDF to see\npage preview here",
+            )
             return
         p.drawPixmap(int(st._img_l), int(st._img_t), st._preview_pixmap)
         st._paint_search_highlights(p)
@@ -100,8 +134,11 @@ class _PreviewCanvas(QWidget):
             ih = st._img_b - st._img_t
             cut_y = st._img_t + st._cut_ratio * ih
             near = abs(event.position().y() - cut_y) <= 15
-            self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor if near
-                                   else Qt.CursorShape.ArrowCursor))
+            self.setCursor(
+                QCursor(
+                    Qt.CursorShape.SizeVerCursor if near else Qt.CursorShape.ArrowCursor
+                )
+            )
         st._do_drag(event)
 
     def mouseReleaseEvent(self, event):
@@ -114,43 +151,174 @@ class _PreviewCanvas(QWidget):
             st._show(st.current_page)
 
 
+class _SplitWorker(QThread):
+    progress = Signal(int)
+    status = Signal(str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, mode: str, pdf_path: str, **kwargs):
+        super().__init__()
+        self._mode = mode
+        self._pdf_path = pdf_path
+        self._kwargs = kwargs
+
+    def run(self):
+        import worker_semaphore
+
+        worker_semaphore.acquire()
+        try:
+            out_dir = self._kwargs.get("out_dir") or self._kwargs.get("output_dir", ".")
+            assert_file_writable(Path(out_dir) / "_probe")
+            backup_original(Path(self._pdf_path))
+            if self._mode == "chapters":
+                self._by_chapters()
+            else:
+                self._by_ranges()
+        except PermissionError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception("worker failed")
+            self.failed.emit(str(exc))
+        finally:
+            worker_semaphore.release()
+
+    def _by_chapters(self):
+        out_dir = self._kwargs["out_dir"]
+        top = self._kwargs["top"]
+        total_pages = self._kwargs["total_pages"]
+        base = Path(self._pdf_path).stem
+        n = len(top)
+
+        src = fitz.open(self._pdf_path)
+        try:
+            for i, entry in enumerate(top):
+                start_pg = entry[2] - 1
+                end_pg = (top[i + 1][2] - 2) if i + 1 < n else (total_pages - 1)
+                end_pg = max(start_pg, min(end_pg, total_pages - 1))
+
+                out = fitz.open()
+                try:
+                    out.insert_pdf(src, from_page=start_pg, to_page=end_pg)
+                    safe_title = (
+                        "".join(
+                            c if c.isalnum() or c in " _-" else "_" for c in entry[1]
+                        ).strip()
+                        or f"chapter_{i + 1}"
+                    )
+                    fname = f"{base}_{i + 1:02d}_{safe_title[:40]}.pdf"
+                    out.save(str(Path(out_dir) / fname))
+                finally:
+                    out.close()
+
+                self.progress.emit(int((i + 1) / n * 100))
+                self.status.emit(f"Chapter {i + 1}/{n}: {entry[1][:40]}")
+        finally:
+            src.close()
+
+        self.finished.emit(f"Done! {n} chapters saved.")
+
+    def _by_ranges(self):
+        ranges = self._kwargs["ranges"]
+        page_cuts = self._kwargs["page_cuts"]
+        output_dir = self._kwargs["output_dir"]
+        filename_template = self._kwargs["filename_template"]
+        A4_W, A4_H = 595.28, 841.89
+        base = Path(self._pdf_path).stem
+        n = len(ranges)
+
+        src = fitz.open(self._pdf_path)
+        try:
+            for i, (s, e) in enumerate(ranges):
+                out = fitz.open()
+                try:
+                    for pn in range(s - 1, e):
+                        src_page = src[pn]
+                        new_page = out.new_page(width=A4_W, height=A4_H)
+                        sr = src_page.rect
+                        scale = A4_W / sr.width if sr.width > 0 else 1.0
+
+                        if pn in page_cuts and s != e:
+                            cr = page_cuts[pn]
+                            cut_y = cr * sr.height
+                            first, last = pn == s - 1, pn == e - 1
+
+                            if first and last:
+                                new_page.show_pdf_page(new_page.rect, src, pn)
+                            elif last:
+                                clip = fitz.Rect(sr.x0, sr.y0, sr.x1, sr.y0 + cut_y)
+                                dest_h = min(cut_y * scale, A4_H)
+                                new_page.show_pdf_page(
+                                    fitz.Rect(0, 0, A4_W, dest_h), src, pn, clip=clip
+                                )
+                            elif first:
+                                clip = fitz.Rect(sr.x0, sr.y0 + cut_y, sr.x1, sr.y1)
+                                dest_h = min((sr.height - cut_y) * scale, A4_H)
+                                new_page.show_pdf_page(
+                                    fitz.Rect(0, 0, A4_W, dest_h), src, pn, clip=clip
+                                )
+                            else:
+                                new_page.show_pdf_page(new_page.rect, src, pn)
+                        else:
+                            new_page.show_pdf_page(new_page.rect, src, pn)
+
+                    tmpl = filename_template or f"{base}_part%d"
+                    fname = tmpl.replace("%d", str(i + 1))
+                    if not fname.lower().endswith(".pdf"):
+                        fname += ".pdf"
+                    out.save(str(Path(output_dir) / fname))
+                finally:
+                    out.close()
+
+                self.progress.emit(int((i + 1) / n * 100))
+                self.status.emit(f"Part {i + 1} of {n} created (p. {s}–{e})...")
+        finally:
+            src.close()
+
+        self.finished.emit(f"Done! {n} parts created.")
+
+
 # ===========================================================================
 # SplitTool
 # ===========================================================================
+
 
 class SplitTool(QWidget):
     THUMB_W = 64
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._worker = None
 
         if fitz is None or PdfReader is None:
             lay = QVBoxLayout(self)
-            lbl = QLabel("⚠  Missing dependencies.\n\n"
-                         "Install them with:\n"
-                         "  pip install pymupdf pypdf")
+            lbl = QLabel(
+                "⚠  Missing dependencies.\n\n"
+                "Install them with:\n"
+                "  pip install pymupdf pypdf"
+            )
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {G500}; font: 16px 'Segoe UI';")
             lay.addWidget(lbl)
             return
 
         # -- State --
-        self.pdf_path     = ""
-        self.output_dir   = ""
-        self.total_pages  = 0
+        self.pdf_path = ""
+        self.output_dir = ""
+        self.total_pages = 0
         self.current_page = 0
-        self.doc          = None
+        self.doc = None
         self.ranges: list[tuple[int, int]] = []
-        self.page_cuts: dict[int, float]   = {}
-        self._cut_ratio   = 1.0
-        self._dragging    = False
+        self.page_cuts: dict[int, float] = {}
+        self._cut_ratio = 1.0
+        self._dragging = False
         self._img_l = self._img_r = self._img_t = self._img_b = 0.0
         self._preview_pixmap: QPixmap | None = None
-        self._thumb_pixmaps: list[QPixmap]   = []
-        self._thumb_frames: list[tuple]      = []  # (frame, img_lbl)
-        self._render_scale: float            = 1.0
-        self._search_matches: list           = []  # [(page_idx, fitz.Rect), ...]
-        self._search_current: int            = -1
+        self._thumb_pixmaps: list[QPixmap] = []
+        self._thumb_frames: list[tuple] = []  # (frame, img_lbl)
+        self._render_scale: float = 1.0
+        self._search_matches: list = []  # [(page_idx, fitz.Rect), ...]
+        self._search_current: int = -1
 
         self._build_ui()
         self._setup_shortcuts()
@@ -188,15 +356,11 @@ class SplitTool(QWidget):
         self._ranges_layout = QVBoxLayout(self._hidden_ranges_host)
         self._ranges_layout.addStretch()
 
-
     def _build_left_panel(self) -> QWidget:
         # ======== LEFT ASIDE (400px, white, right-border) ==================
         left = QWidget()
         left.setFixedWidth(400)
-        left.setStyleSheet(
-            f"background: {WHITE};"
-            f" border-right: 1px solid {G200};"
-        )
+        left.setStyleSheet(f"background: {WHITE}; border-right: 1px solid {G200};")
         left_outer = QVBoxLayout(left)
         left_outer.setContentsMargins(0, 0, 0, 0)
         left_outer.setSpacing(0)
@@ -222,7 +386,7 @@ class SplitTool(QWidget):
         icon_box.setFixedSize(40, 40)
         icon_box.setPixmap(svg_pixmap("scissors", "#3B82F6", 22))
         icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_box.setStyleSheet("background: #DBEAFE; border-radius: 8px;")
+        icon_box.setStyleSheet(f"background: {BLUE_MED}; border-radius: 8px;")
         title_row.addWidget(icon_box)
 
         title_lbl = QLabel("Split PDF")
@@ -249,9 +413,7 @@ class SplitTool(QWidget):
         drop_zone = QFrame()
         drop_zone.setFixedHeight(56)
         drop_zone.setStyleSheet(
-            "background: rgba(249,250,251,128);"
-            f" border: 2px dashed {G200};"
-            " border-radius: 12px;"
+            f"background: {G100}; border: 2px dashed {G200}; border-radius: 12px;"
         )
         dz_lay = QHBoxLayout(drop_zone)
         dz_lay.setContentsMargins(10, 0, 10, 0)
@@ -297,11 +459,15 @@ class SplitTool(QWidget):
         left_lay.addSpacing(8)
 
         self.split_mode_combo = QComboBox()
-        self.split_mode_combo.addItems([
-            "Split by Range",
-            "Split Every N Pages",
-            "Split in Half",
-        ])
+        self.split_mode_combo.addItems(
+            [
+                "Split by Range",
+                "Split Every N Pages",
+                "Split in Half",
+                "Split by Chapters",
+            ]
+        )
+        self.split_mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.split_mode_combo.setFixedHeight(44)
         self.split_mode_combo.setStyleSheet(f"""
             QComboBox {{
@@ -316,6 +482,15 @@ class SplitTool(QWidget):
         """)
         left_lay.addWidget(self.split_mode_combo)
         left_lay.addSpacing(24)
+
+        # Ranges container (hidden when chapters mode is active)
+        self._ranges_container = QWidget()
+        self._ranges_container.setStyleSheet("background: transparent;")
+        _rc = QVBoxLayout(self._ranges_container)
+        _rc.setContentsMargins(0, 0, 0, 0)
+        _rc.setSpacing(0)
+        _orig_left_lay = left_lay
+        left_lay = _rc  # redirect ranges widgets into container
 
         # --- PAGE RANGES section ---
         sec_ranges = QLabel("PAGE RANGES")
@@ -428,12 +603,44 @@ class SplitTool(QWidget):
 
         left_lay.addLayout(quick_row)
 
-        ranges_hint = QLabel("Separate ranges with commas. Use From/to to quickly add a range.")
+        ranges_hint = QLabel(
+            "Separate ranges with commas. Use From/to to quickly add a range."
+        )
         ranges_hint.setStyleSheet(
             f"color: {G400}; font: italic 11px 'Segoe UI';"
             " background: transparent; border: none;"
         )
         left_lay.addWidget(ranges_hint)
+
+        # Restore original layout; add ranges container to it
+        left_lay = _orig_left_lay
+        left_lay.addWidget(self._ranges_container)
+        left_lay.addSpacing(24)
+
+        # Chapters container (shown only in "Split by Chapters" mode)
+        self._chapters_container = QWidget()
+        self._chapters_container.setStyleSheet("background: transparent;")
+        self._chapters_container.hide()
+        _chv = QVBoxLayout(self._chapters_container)
+        _chv.setContentsMargins(0, 0, 0, 0)
+        _chv.setSpacing(8)
+
+        _sec_ch = QLabel("CHAPTERS")
+        _sec_ch.setStyleSheet(
+            f"color: {G500}; font: bold 12px 'Segoe UI';"
+            " letter-spacing: 1.2px; background: transparent; border: none;"
+        )
+        _chv.addWidget(_sec_ch)
+
+        self._chapters_lbl = QLabel("Load a PDF to detect chapters from bookmarks.")
+        self._chapters_lbl.setWordWrap(True)
+        self._chapters_lbl.setStyleSheet(
+            f"color: {G700}; font: 12px 'Segoe UI';"
+            " background: transparent; border: none;"
+        )
+        _chv.addWidget(self._chapters_lbl)
+
+        left_lay.addWidget(self._chapters_container)
         left_lay.addSpacing(24)
 
         # --- OUTPUT FILENAME section ---
@@ -496,10 +703,7 @@ class SplitTool(QWidget):
 
         # --- Bottom section (split button) ---
         bot_section = QWidget()
-        bot_section.setStyleSheet(
-            f"background: {WHITE};"
-            f" border-top: 1px solid {G200};"
-        )
+        bot_section.setStyleSheet(f"background: {WHITE}; border-top: 1px solid {G200};")
         bot_sec_lay = QVBoxLayout(bot_section)
         bot_sec_lay.setContentsMargins(25, 25, 25, 25)
         bot_sec_lay.setSpacing(0)
@@ -523,7 +727,7 @@ class SplitTool(QWidget):
 
     def _build_right_panel(self) -> QWidget:
         right = QWidget()
-        right.setStyleSheet("background: #EEF0F3; border: none;")
+        right.setStyleSheet(f"background: {G100}; border: none;")
         right_lay = QVBoxLayout(right)
         right_lay.setContentsMargins(0, 0, 0, 0)
         right_lay.setSpacing(0)
@@ -531,9 +735,7 @@ class SplitTool(QWidget):
         # Canvas top bar (48px, white, border-bottom)
         top_bar = QWidget()
         top_bar.setFixedHeight(48)
-        top_bar.setStyleSheet(
-            f"background: {WHITE}; border-bottom: 1px solid {G200};"
-        )
+        top_bar.setStyleSheet(f"background: {WHITE}; border-bottom: 1px solid {G200};")
         top_bar_lay = QHBoxLayout(top_bar)
         top_bar_lay.setContentsMargins(12, 0, 12, 0)
         top_bar_lay.setSpacing(4)
@@ -758,9 +960,7 @@ class SplitTool(QWidget):
         # Thumbnail strip (144px, white, border-top)
         thumb_strip = QWidget()
         thumb_strip.setFixedHeight(144)
-        thumb_strip.setStyleSheet(
-            f"background: {WHITE}; border-top: 1px solid {G200};"
-        )
+        thumb_strip.setStyleSheet(f"background: {WHITE}; border-top: 1px solid {G200};")
         thumb_strip_lay = QVBoxLayout(thumb_strip)
         thumb_strip_lay.setContentsMargins(0, 0, 0, 0)
         thumb_strip_lay.setSpacing(0)
@@ -793,11 +993,12 @@ class SplitTool(QWidget):
         self._thumb_scroll = QScrollArea()
         self._thumb_scroll.setWidgetResizable(True)
         self._thumb_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self._thumb_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._thumb_scroll.setStyleSheet(
-            f"background: transparent; border: none;")
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._thumb_scroll.setStyleSheet("background: transparent; border: none;")
 
         thumb_inner = QWidget()
         thumb_inner.setStyleSheet("background: transparent;")
@@ -825,8 +1026,8 @@ class SplitTool(QWidget):
         """
 
     def _setup_shortcuts(self):
-        QShortcut(QKeySequence("Left"),   self).activated.connect(self._prev)
-        QShortcut(QKeySequence("Right"),  self).activated.connect(self._next)
+        QShortcut(QKeySequence("Left"), self).activated.connect(self._prev)
+        QShortcut(QKeySequence("Right"), self).activated.connect(self._next)
         QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self._open_search)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._close_search)
 
@@ -841,6 +1042,8 @@ class SplitTool(QWidget):
         self.pdf_path = p
         self.file_entry.setText(p)
         self._load_pdf()
+        if self.split_mode_combo.currentText() == "Split by Chapters":
+            self._update_chapters_label()
 
     def _pick_output(self):
         p = QFileDialog.getExistingDirectory(self, "Select Output Folder")
@@ -882,6 +1085,7 @@ class SplitTool(QWidget):
             self._show(0)
         except Exception as e:
             self.total_pages = 0
+            logger.exception("could not open pdf")
             QMessageBox.critical(self, "Error", f"Could not load PDF:\n{e}")
 
     # ==================================================================
@@ -1066,14 +1270,14 @@ class SplitTool(QWidget):
         # Zone bars (blue = top part, orange = bottom part)
         if has:
             bx = int(self._img_l) - 6
-            p.fillRect(bx, int(self._img_t), 4,
-                       int(y - self._img_t), QColor(BLUE))
-            p.fillRect(bx, int(y), 4,
-                       int(self._img_b - y), QColor("#F97316"))
+            p.fillRect(bx, int(self._img_t), 4, int(y - self._img_t), QColor(BLUE))
+            p.fillRect(bx, int(y), 4, int(self._img_b - y), QColor("#F97316"))
 
         self.cut_lbl.setText(
-            "✂ Above → current part | Below → next part" if has
-            else "Drag the line up to cut this page")
+            "✂ Above → current part | Below → next part"
+            if has
+            else "Drag the line up to cut this page"
+        )
 
     def _start_drag(self, event):
         if self._img_b <= self._img_t:
@@ -1136,9 +1340,12 @@ class SplitTool(QWidget):
             pix_raw = page.get_pixmap(matrix=fitz.Matrix(s, s), alpha=False)
             pm = _fitz_pix_to_qpixmap(pix_raw)
             # Scale to fixed 64×90 thumbnail size
-            pm = pm.scaled(self.THUMB_W, THUMB_H,
-                           Qt.AspectRatioMode.KeepAspectRatio,
-                           Qt.TransformationMode.SmoothTransformation)
+            pm = pm.scaled(
+                self.THUMB_W,
+                THUMB_H,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
             self._thumb_pixmaps.append(pm)
 
             frame = QFrame()
@@ -1158,12 +1365,13 @@ class SplitTool(QWidget):
             num_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             num_lbl.setStyleSheet(
                 f"color: {G500}; font: 9px 'Segoe UI';"
-                " background: transparent; border: none;")
+                " background: transparent; border: none;"
+            )
 
             fl.addWidget(img_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
             fl.addWidget(num_lbl)
 
-            frame.mousePressEvent  = lambda e, idx=i: self._show(idx)
+            frame.mousePressEvent = lambda e, idx=i: self._show(idx)
             img_lbl.mousePressEvent = lambda e, idx=i: self._show(idx)
 
             # Insert before the trailing stretch
@@ -1171,17 +1379,12 @@ class SplitTool(QWidget):
             self._thumb_layout.insertWidget(pos, frame)
             self._thumb_frames.append((frame, img_lbl))
 
-            if i % 10 == 0:
-                QApplication.processEvents()
-
     def _hl_thumb(self, idx):
         for i, (_, img_lbl) in enumerate(self._thumb_frames):
             if i == idx:
-                img_lbl.setStyleSheet(
-                    f"border: 2px solid {BLUE}; background: white;")
+                img_lbl.setStyleSheet(f"border: 2px solid {BLUE}; background: white;")
             else:
-                img_lbl.setStyleSheet(
-                    f"border: 2px solid {G300}; background: white;")
+                img_lbl.setStyleSheet(f"border: 2px solid {G300}; background: white;")
 
     # ==================================================================
     # RANGE MANAGEMENT
@@ -1200,8 +1403,11 @@ class SplitTool(QWidget):
             QMessageBox.critical(self, "Error", "Start page must be ≤ end page.")
             return
         if e > self.total_pages:
-            QMessageBox.critical(self, "Error",
-                f"Page {e} doesn't exist. PDF has {self.total_pages} pages.")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Page {e} doesn't exist. PDF has {self.total_pages} pages.",
+            )
             return
 
         self.ranges.append((s, e))
@@ -1224,28 +1430,30 @@ class SplitTool(QWidget):
                     widget.deleteLater()
 
         for i, (s, e) in enumerate(self.ranges):
-            txt = (f"Part {i + 1}: Pages {s}–{e}" if s != e
-                   else f"Part {i + 1}: Page {s}")
+            txt = (
+                f"Part {i + 1}: Pages {s}–{e}" if s != e else f"Part {i + 1}: Page {s}"
+            )
             cuts = []
             if (e - 1) in self.page_cuts and s != e:
-                cuts.append(f"p.{e} ✂{int(self.page_cuts[e-1]*100)}%↑")
+                cuts.append(f"p.{e} ✂{int(self.page_cuts[e - 1] * 100)}%↑")
             if (s - 1) in self.page_cuts and s != e:
-                cuts.append(f"p.{s} ✂{int(self.page_cuts[s-1]*100)}%↓")
+                cuts.append(f"p.{s} ✂{int(self.page_cuts[s - 1] * 100)}%↓")
             if cuts:
                 txt += f"  ({', '.join(cuts)})"
 
             card = QFrame()
             card.setFixedHeight(44)
             card.setStyleSheet(
-                f"background: {WHITE}; border: 1px solid {G300};"
-                " border-radius: 10px;")
+                f"background: {WHITE}; border: 1px solid {G300}; border-radius: 10px;"
+            )
             card_lay = QHBoxLayout(card)
             card_lay.setContentsMargins(14, 0, 6, 0)
 
             lbl = QLabel(txt)
             lbl.setStyleSheet(
                 f"color: {G900}; font: 13px 'Segoe UI';"
-                " background: transparent; border: none;")
+                " background: transparent; border: none;"
+            )
             card_lay.addWidget(lbl, 1)
 
             del_btn = QPushButton()
@@ -1263,6 +1471,32 @@ class SplitTool(QWidget):
             card_lay.addWidget(del_btn)
 
             self._ranges_layout.insertWidget(i, card)
+
+    def _on_mode_changed(self, index: int):
+        is_chapters = self.split_mode_combo.currentText() == "Split by Chapters"
+        self._ranges_container.setVisible(not is_chapters)
+        self._chapters_container.setVisible(is_chapters)
+        if is_chapters and self.pdf_path:
+            self._update_chapters_label()
+
+    def _update_chapters_label(self):
+        if fitz is None or not self.pdf_path:
+            return
+        try:
+            doc = fitz.open(self.pdf_path)
+            toc = doc.get_toc()
+            doc.close()
+        except Exception:
+            self._chapters_lbl.setText("Could not read bookmarks.")
+            return
+        top = [e for e in toc if e[0] == 1]
+        if not top:
+            self._chapters_lbl.setText(
+                "No top-level bookmarks found. Cannot split by chapters."
+            )
+            return
+        lines = [f"{i + 1}. {e[1]}  (p. {e[2]})" for i, e in enumerate(top)]
+        self._chapters_lbl.setText("\n".join(lines))
 
     def _quick_add_range(self):
         try:
@@ -1296,9 +1530,16 @@ class SplitTool(QWidget):
         if not self.pdf_path:
             QMessageBox.critical(self, "Error", "Please select a PDF file first.")
             return
+
+        if self.split_mode_combo.currentText() == "Split by Chapters":
+            self._split_by_chapters()
+            return
+
         ranges_text = self.ranges_edit.text().strip()
         if not ranges_text:
-            QMessageBox.critical(self, "Error", "Please enter page ranges (e.g. 1-4, 7, 10-12).")
+            QMessageBox.critical(
+                self, "Error", "Please enter page ranges (e.g. 1-4, 7, 10-12)."
+            )
             return
         try:
             parsed = []
@@ -1313,84 +1554,92 @@ class SplitTool(QWidget):
                     n = int(part)
                     parsed.append((n, n))
         except ValueError:
-            QMessageBox.critical(self, "Error", "Invalid range format. Use e.g. 1-4, 7, 10-12")
+            QMessageBox.critical(
+                self, "Error", "Invalid range format. Use e.g. 1-4, 7, 10-12"
+            )
             return
         if not parsed:
             QMessageBox.critical(self, "Error", "No valid ranges entered.")
             return
         self.ranges = parsed
         if not self.output_dir:
-            self.output_dir = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+            self.output_dir = QFileDialog.getExistingDirectory(
+                self, "Select Output Folder"
+            )
             if not self.output_dir:
                 return
         self.split_btn.setEnabled(False)
         self.progress.show()
-        try:
-            self._do_split()
-        except Exception as ex:
-            QMessageBox.critical(self, "Error", f"Split failed:\n{ex}")
-            self.status_lbl.setText("Error during split.")
-        finally:
-            self.split_btn.setEnabled(True)
-
-    def _do_split(self):
-        if fitz is None:
-            QMessageBox.critical(self, "Missing dependency",
-                                 "PyMuPDF (fitz) is not installed.")
-            return
-
-        A4_W, A4_H = 595.28, 841.89
-        src = fitz.open(self.pdf_path)
-        base = Path(self.pdf_path).stem
-        n = len(self.ranges)
         self.progress.setValue(0)
 
-        for i, (s, e) in enumerate(self.ranges):
-            out = fitz.open()
-            for pn in range(s - 1, e):
-                src_page = src[pn]
-                new_page = out.new_page(width=A4_W, height=A4_H)
-                sr = src_page.rect
-                scale = A4_W / sr.width if sr.width > 0 else 1.0
+        self._worker = _SplitWorker(
+            "ranges",
+            self.pdf_path,
+            ranges=list(self.ranges),
+            page_cuts=dict(self.page_cuts),
+            output_dir=self.output_dir,
+            filename_template=self.filename_entry.text().strip(),
+        )
+        self._worker.progress.connect(self.progress.setValue)
+        self._worker.status.connect(self.status_lbl.setText)
+        self._worker.finished.connect(self._on_split_done)
+        self._worker.failed.connect(self._on_split_failed)
+        self._worker.start()
 
-                if pn in self.page_cuts and s != e:
-                    cr = self.page_cuts[pn]
-                    cut_y = cr * sr.height          # fitz y from top
-                    first, last = pn == s - 1, pn == e - 1
+    def _split_by_chapters(self):
+        if fitz is None:
+            QMessageBox.critical(
+                self, "Missing dependency", "PyMuPDF (fitz) is not installed."
+            )
+            return
+        try:
+            doc = fitz.open(self.pdf_path)
+            toc = doc.get_toc()
+            total_pages = doc.page_count
+            doc.close()
+        except Exception as exc:
+            logger.exception("could not open pdf")
+            QMessageBox.critical(self, "Error", f"Could not read PDF:\n{exc}")
+            return
 
-                    if first and last:
-                        new_page.show_pdf_page(new_page.rect, src, pn)
-                    elif last:
-                        # Top portion (above cut line) → placed at top of A4
-                        clip = fitz.Rect(sr.x0, sr.y0, sr.x1, sr.y0 + cut_y)
-                        dest_h = min(cut_y * scale, A4_H)
-                        new_page.show_pdf_page(
-                            fitz.Rect(0, 0, A4_W, dest_h), src, pn, clip=clip)
-                    elif first:
-                        # Bottom portion (below cut line) → placed at top of A4
-                        clip = fitz.Rect(sr.x0, sr.y0 + cut_y, sr.x1, sr.y1)
-                        dest_h = min((sr.height - cut_y) * scale, A4_H)
-                        new_page.show_pdf_page(
-                            fitz.Rect(0, 0, A4_W, dest_h), src, pn, clip=clip)
-                    else:
-                        new_page.show_pdf_page(new_page.rect, src, pn)
-                else:
-                    new_page.show_pdf_page(new_page.rect, src, pn)
+        top = [e for e in toc if e[0] == 1]
+        if not top:
+            QMessageBox.warning(
+                self, "No Chapters", "This PDF has no top-level bookmarks to split by."
+            )
+            return
 
-            tmpl = self.filename_entry.text().strip() or f"{base}_part%d"
-            fname = tmpl.replace("%d", str(i + 1))
-            if not fname.lower().endswith(".pdf"):
-                fname += ".pdf"
-            out.save(str(Path(self.output_dir) / fname))
-            out.close()
+        out_dir = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+        if not out_dir:
+            return
 
-            self.progress.setValue(int((i + 1) / n * 100))
-            self.status_lbl.setText(
-                f"Part {i + 1} of {n} created (p. {s}–{e})...")
-            QApplication.processEvents()
+        self.split_btn.setEnabled(False)
+        self.progress.show()
+        self.progress.setValue(0)
 
-        src.close()
-        self.status_lbl.setText(f"Done! {n} parts created.")
+        self._worker = _SplitWorker(
+            "chapters",
+            self.pdf_path,
+            out_dir=out_dir,
+            top=top,
+            total_pages=total_pages,
+        )
+        self._worker.progress.connect(self.progress.setValue)
+        self._worker.status.connect(self.status_lbl.setText)
+        self._worker.finished.connect(self._on_split_done)
+        self._worker.failed.connect(self._on_split_failed)
+        self._worker.start()
+
+    def _on_split_done(self, msg: str):
+        self.status_lbl.setText(msg)
+        self.split_btn.setEnabled(True)
+        self.progress.hide()
+
+    def _on_split_failed(self, msg: str):
+        QMessageBox.critical(self, "Error", f"Split failed:\n{msg}")
+        self.status_lbl.setText("Error during split.")
+        self.split_btn.setEnabled(True)
+        self.progress.hide()
 
     # ==================================================================
     # CLEANUP

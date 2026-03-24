@@ -3,131 +3,306 @@
 Run this single file to start the app:
     python main.py
 """
+
 from __future__ import annotations
 
-import sys
+import atexit
+import logging
 import os
+import pathlib
+import sys
+
+from logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
+
+_TEMP_FILES: list[str] = []
+
+
+def _register_temp(path: str) -> str:
+    _TEMP_FILES.append(path)
+    return path
+
+
+def _cleanup_temps() -> None:
+    for p in _TEMP_FILES:
+        try:
+            if os.path.exists(p):
+                os.unlink(p)
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_temps)
 
 
 def resource_path(relative_path: str) -> str:
     """Return absolute path to a resource — works both in dev and in a PyInstaller .exe."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, relative_path)
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QGridLayout, QHBoxLayout, QVBoxLayout,
-    QFileDialog, QMessageBox, QSizePolicy, QStackedWidget,
+
+
+_translator = None
+
+
+def _install_translator(app) -> None:
+    global _translator
+    locale_name = QLocale.system().name()
+    lang = locale_name.split("_")[0]
+    translations_dir = pathlib.Path(resource_path("translations"))
+
+    candidates = [
+        translations_dir / f"pdffree_{locale_name}.qm",
+        translations_dir / f"pdffree_{lang}.qm",
+        translations_dir / "pdffree_en.qm",
+    ]
+
+    qm_path = None
+    for candidate in candidates:
+        if candidate.exists():
+            qm_path = candidate
+            break
+
+    if qm_path is None:
+        logger.debug("no .qm translation file found; using English fallback")
+        return
+
+    translator = QTranslator(app)
+    if translator.load(str(qm_path)):
+        app.installTranslator(translator)
+        _translator = translator
+        logger.info("loaded translation: %s", qm_path.name)
+    else:
+        logger.warning("could not load translation: %s", qm_path)
+
+
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QLineEdit,
+    QScrollArea,
+    QGridLayout,
+    QHBoxLayout,
+    QVBoxLayout,
+    QFileDialog,
+    QMessageBox,
+    QSizePolicy,
+    QStackedWidget,
 )
-from PySide6.QtCore import Qt, QTimer, QSize, Signal
-from PySide6.QtGui import (
-    QPainter, QColor, QFont, QPen, QBrush, QPainterPath, QCursor, QIcon, QPixmap,
+from PySide6.QtCore import Qt, QTimer, QSize, Signal, QTranslator, QLocale  # noqa: E402
+from PySide6.QtGui import (  # noqa: E402
+    QPainter,
+    QColor,
+    QFont,
+    QPen,
+    QPainterPath,
+    QCursor,
+    QIcon,
+    QPixmap,
+    QKeySequence,
+    QShortcut,
 )
-from icons import svg_pixmap, svg_icon, is_svg_icon
-from utils import _make_back_button
-from colors import (
-    BG, WHITE, G100, G200, G300, G400, G500, G600, G700, G900,
-    TEAL, BLUE, GREEN, CORAL, RED,
-    SOON_TXT, SOON_BG, QS_BG, BLUE_ACCENT,
+from icons import svg_pixmap, svg_icon, is_svg_icon  # noqa: E402
+from utils import _make_back_button  # noqa: E402
+from i18n import QT_TRANSLATE_NOOP, tr  # noqa: E402
+import colors  # noqa: E402
+from colors import (  # noqa: E402
+    BG,
+    WHITE,
+    G100,
+    G200,
+    G300,
+    G400,
+    G500,
+    G700,
+    G900,
+    TEAL,
+    BLUE,
+    GREEN,
+    CORAL,
+    RED,
+    BLUE_ACCENT,
 )
 
 # ---------------------------------------------------------------------------
 # Implemented tools  (add tool IDs here as you build them)
 # ---------------------------------------------------------------------------
-IMPLEMENTED = {"split", "view", "excerpt"}
+IMPLEMENTED = {
+    "split",
+    "view",
+    "excerpt",
+    "merge",
+    "remove",
+    "rotate",
+    "compress",
+    "add_password",
+    "remove_password",
+    "img_to_pdf",
+    "pdf_to_img",
+    "add_page_numbers",
+    "change_metadata",
+    "add_watermark",
+    "crop",
+    "pdf_to_word",
+    "ocr_pdf",
+    "flatten",
+    "sanitize",
+    "extract_images",
+    "adjust_size",
+    "headers_footers",
+    "nup",
+    "pdf_to_excel",
+    "compare",
+    "remove_annotations",
+    "reorder",
+    "manual_redaction",
+    "add_image",
+    "batch",
+    "page_labels",
+    "bookmarks",
+    "pdfa",
+    "sign",
+    "html_to_pdf",
+    "office_to_pdf",
+    "pdf_to_csv",
+    "form_unlock",
+    "form_export",
+    "validate_signature",
+    "font_info",
+    "svg_to_pdf",
+}
 
 # ---------------------------------------------------------------------------
 # Tool definitions  –  id · display name · icon char
 # ---------------------------------------------------------------------------
 CATEGORIES = [
     {
-        "title": "Core",
+        "title": QT_TRANSLATE_NOOP("PDFree", "Core"),
         "color": BLUE_ACCENT,
         "tools": [
-            ("view",    "View PDF",     "eye"),
-            ("excerpt", "Excerpt Tool", "copy"),
-            ("split",   "Split",        "scissors"),
+            ("view", QT_TRANSLATE_NOOP("PDFree", "View PDF"), "eye"),
+            ("excerpt", QT_TRANSLATE_NOOP("PDFree", "Excerpt Tool"), "copy"),
+            ("split", QT_TRANSLATE_NOOP("PDFree", "Split"), "scissors"),
         ],
     },
     {
-        "title": "Organize",
+        "title": QT_TRANSLATE_NOOP("PDFree", "Organize"),
         "color": TEAL,
         "tools": [
-            ("adjust_size",       "Adjust page size/scale", "maximize"),
-            ("crop",              "Crop PDF",               "scan-line"),
-            ("extract_pages",     "Extract page(s)",        "file-output"),
-            ("merge",             "Merge",                  "merge"),
-            ("multi_tool",        "PDF Multi Tool",         "layers"),
-            ("remove",            "Remove",                 "trash-2"),
-            ("rotate",            "Rotate",                 "rotate-cw"),
-            ("single_large_page", "Single Large Page",      "maximize"),
+            (
+                "adjust_size",
+                QT_TRANSLATE_NOOP("PDFree", "Adjust Page Size"),
+                "maximize",
+            ),
+            ("crop", QT_TRANSLATE_NOOP("PDFree", "Crop PDF"), "scan-line"),
+            ("merge", QT_TRANSLATE_NOOP("PDFree", "Merge"), "merge"),
+            ("nup", QT_TRANSLATE_NOOP("PDFree", "N-Up Layout"), "layers"),
+            ("remove", QT_TRANSLATE_NOOP("PDFree", "Remove Pages"), "file-minus"),
+            ("reorder", QT_TRANSLATE_NOOP("PDFree", "Reorder Pages"), "layers"),
+            ("rotate", QT_TRANSLATE_NOOP("PDFree", "Rotate"), "rotate-cw"),
         ],
     },
     {
-        "title": "Convert to PDF",
+        "title": QT_TRANSLATE_NOOP("PDFree", "Convert to PDF"),
         "color": BLUE,
         "tools": [
-            ("img_to_pdf", "Image to PDF", "image"),
+            ("img_to_pdf", QT_TRANSLATE_NOOP("PDFree", "Image to PDF"), "image"),
+            ("html_to_pdf", QT_TRANSLATE_NOOP("PDFree", "HTML to PDF"), "file-output"),
+            (
+                "office_to_pdf",
+                QT_TRANSLATE_NOOP("PDFree", "Office to PDF"),
+                "file-text",
+            ),
+            ("svg_to_pdf", QT_TRANSLATE_NOOP("PDFree", "SVG to PDF"), "image"),
         ],
     },
     {
-        "title": "Convert from PDF",
+        "title": QT_TRANSLATE_NOOP("PDFree", "Convert from PDF"),
         "color": BLUE,
         "tools": [
-            ("pdf_to_img",  "PDF to Image",       "image"),
-            ("pdf_to_rtf",  "PDF to RTF (Text)",  "file-output"),
+            ("pdf_to_img", QT_TRANSLATE_NOOP("PDFree", "PDF to Image"), "image"),
+            ("pdf_to_word", QT_TRANSLATE_NOOP("PDFree", "PDF to Word"), "file-text"),
+            ("pdf_to_excel", QT_TRANSLATE_NOOP("PDFree", "PDF to Excel"), "file-text"),
+            ("pdf_to_csv", QT_TRANSLATE_NOOP("PDFree", "PDF to CSV"), "table"),
+            ("ocr_pdf", QT_TRANSLATE_NOOP("PDFree", "OCR PDF"), "scan-line"),
         ],
     },
     {
-        "title": "Sign & Security",
+        "title": QT_TRANSLATE_NOOP("PDFree", "Sign & Security"),
         "color": GREEN,
         "tools": [
-            ("add_password",        "Add Password",              "lock"),
-            ("add_stamp",           "Add Stamp to PDF",          "stamp"),
-            ("add_watermark",       "Add Watermark",             "droplets"),
-            ("auto_redact",         "Auto Redact",               "ban"),
-            ("change_permissions",  "Change Permissions",        "shield"),
-            ("manual_redaction",    "Manual Redaction",          "eraser"),
-            ("remove_cert_sign",    "Remove Certificate Sign",   "file-minus"),
-            ("remove_password",     "Remove Password",           "unlock"),
-            ("sanitize",            "Sanitize",                  "eraser"),
-            ("sign",                "Sign",                      "pen-line"),
-            ("sign_cert",           "Sign with Certificate",     "file-text"),
-            ("validate_sig",        "Validate PDF Signature",    "check-circle"),
+            ("add_password", QT_TRANSLATE_NOOP("PDFree", "Add Password"), "lock"),
+            ("sign", QT_TRANSLATE_NOOP("PDFree", "Sign PDF"), "pen-line"),
+            ("add_watermark", QT_TRANSLATE_NOOP("PDFree", "Add Watermark"), "droplets"),
+            (
+                "manual_redaction",
+                QT_TRANSLATE_NOOP("PDFree", "Manual Redaction"),
+                "eraser",
+            ),
+            (
+                "remove_password",
+                QT_TRANSLATE_NOOP("PDFree", "Remove Password"),
+                "unlock",
+            ),
+            ("sanitize", QT_TRANSLATE_NOOP("PDFree", "Sanitize"), "eraser"),
+            (
+                "form_unlock",
+                QT_TRANSLATE_NOOP("PDFree", "Unlock Form Fields"),
+                "unlock",
+            ),
+            ("form_export", QT_TRANSLATE_NOOP("PDFree", "Export Form Data"), "table"),
+            (
+                "validate_signature",
+                QT_TRANSLATE_NOOP("PDFree", "Validate Signature"),
+                "shield-check",
+            ),
         ],
     },
     {
-        "title": "View & Edit",
+        "title": QT_TRANSLATE_NOOP("PDFree", "View & Edit"),
         "color": CORAL,
         "tools": [
-            ("view",               "View PDF",                  "eye"),
-            ("add_image",          "Add image",                 "file-plus"),
-            ("add_page_numbers",   "Add Page Numbers",          "file-plus"),
-            ("change_metadata",    "Change Metadata",           "pen-line"),
-            ("compare",            "Compare",                   "file-search"),
-            ("extract_images",     "Extract Images",            "image"),
-            ("flatten",            "Flatten",                   "minimize"),
-            ("get_info",           "Get ALL Info on PDF",       "info"),
-            ("remove_annotations", "Remove Annotations",        "trash-2"),
-            ("remove_blank",       "Remove Blank pages",        "file-minus"),
-            ("remove_image",       "Remove image",              "x"),
-            ("replace_color",      "Replace and Invert Color",  "layers"),
-            ("unlock_forms",       "Unlock PDF Forms",          "unlock"),
-            ("view_edit",          "View/Edit PDF",             "pen-line"),
+            ("add_image", QT_TRANSLATE_NOOP("PDFree", "Add Image"), "file-plus"),
+            (
+                "add_page_numbers",
+                QT_TRANSLATE_NOOP("PDFree", "Add Page Numbers"),
+                "file-plus",
+            ),
+            (
+                "change_metadata",
+                QT_TRANSLATE_NOOP("PDFree", "Change Metadata"),
+                "pen-line",
+            ),
+            ("page_labels", QT_TRANSLATE_NOOP("PDFree", "Page Labels"), "file-plus"),
+            ("bookmarks", QT_TRANSLATE_NOOP("PDFree", "Bookmark Editor"), "list"),
+            ("compare", QT_TRANSLATE_NOOP("PDFree", "Compare PDFs"), "file-search"),
+            ("extract_images", QT_TRANSLATE_NOOP("PDFree", "Extract Images"), "image"),
+            ("flatten", QT_TRANSLATE_NOOP("PDFree", "Flatten"), "minimize"),
+            (
+                "headers_footers",
+                QT_TRANSLATE_NOOP("PDFree", "Headers & Footers"),
+                "pen-line",
+            ),
+            (
+                "remove_annotations",
+                QT_TRANSLATE_NOOP("PDFree", "Remove Annotations"),
+                "eraser",
+            ),
+            ("font_info", QT_TRANSLATE_NOOP("PDFree", "Font Info"), "file-search"),
         ],
     },
     {
-        "title": "Advanced",
+        "title": QT_TRANSLATE_NOOP("PDFree", "Advanced"),
         "color": RED,
         "tools": [
-            ("adjust_colors",    "Adjust Colors/Contrast",    "layers"),
-            ("auto_rename",      "Auto Rename PDF File",      "pen-line"),
-            ("auto_split_size",  "Auto Split by Size/Count",  "scan-line"),
-            ("auto_split_pages", "Auto Split Pages",          "scissors"),
-            ("compress",         "Compress",                  "layers"),
-            ("overlay",          "Overlay PDFs",              "layers"),
-            ("pipeline",         "Pipeline",                  "git-branch"),
-            ("show_js",          "Show Javascript",           "file-text"),
-            ("split_chapters",   "Split PDF by Chapters",     "book-open"),
+            ("batch", QT_TRANSLATE_NOOP("PDFree", "Batch Process"), "layers"),
+            ("compress", QT_TRANSLATE_NOOP("PDFree", "Compress"), "layers"),
+            ("pdfa", QT_TRANSLATE_NOOP("PDFree", "PDF/A Export"), "shield"),
         ],
     },
 ]
@@ -136,81 +311,138 @@ CATEGORIES = [
 # Short descriptions for every tool (shown on cards)
 # ---------------------------------------------------------------------------
 TOOL_DESCRIPTIONS = {
-    "adjust_size":        "Resize or rescale PDF pages.",
-    "crop":               "Trim pages to a custom region.",
-    "extract_pages":      "Pull out specific pages.",
-    "merge":              "Combine multiple PDFs into one.",
-    "multi_tool":         "Batch operations on PDF pages.",
-    "remove":             "Delete selected pages from PDF.",
-    "rotate":             "Rotate pages to any angle.",
-    "single_large_page":  "Combine pages into one large page.",
-    "split":              "Separate a PDF into individual pages.",
-    "excerpt":            "Capture regions from multiple PDFs.",
-    "img_to_pdf":         "Convert images into a PDF file.",
-    "pdf_to_img":         "Export pages as image files.",
-    "pdf_to_rtf":         "Convert PDF content to editable text.",
-    "add_password":       "Encrypt PDF with a password.",
-    "add_stamp":          "Stamp a mark on each page.",
-    "add_watermark":      "Overlay custom text or image.",
-    "auto_redact":        "Automatically hide sensitive content.",
-    "change_permissions": "Set printing and copying rights.",
-    "manual_redaction":   "Manually black out private content.",
-    "remove_cert_sign":   "Strip digital certificate signatures.",
-    "remove_password":    "Remove security restrictions.",
-    "sanitize":           "Clean hidden data from PDF.",
-    "sign":               "Add a handwritten digital signature.",
-    "sign_cert":          "Sign with a certificate authority.",
-    "validate_sig":       "Verify digital signature validity.",
-    "view":               "Open and read any PDF file.",
-    "add_image":          "Insert images into PDF pages.",
-    "add_page_numbers":   "Number pages automatically.",
-    "change_metadata":    "Edit title, author, and keywords.",
-    "compare":            "Spot differences between two PDFs.",
-    "extract_images":     "Pull images out of a PDF.",
-    "flatten":            "Flatten annotations and form fields.",
-    "get_info":           "View all metadata and properties.",
-    "remove_annotations": "Strip comments and markup.",
-    "remove_blank":       "Delete empty pages automatically.",
-    "remove_image":       "Remove embedded images from PDF.",
-    "replace_color":      "Invert or swap page colors.",
-    "unlock_forms":       "Make locked form fields editable.",
-    "view_edit":          "Read and annotate PDF files.",
-    "adjust_colors":      "Fine-tune brightness and contrast.",
-    "auto_rename":        "Rename file based on PDF content.",
-    "auto_split_size":    "Split by file size or page count.",
-    "auto_split_pages":   "Split pages by content structure.",
-    "compress":           "Reduce file size, keep quality.",
-    "overlay":            "Layer two PDFs on top of each other.",
-    "pipeline":           "Chain multiple PDF operations.",
-    "show_js":            "Inspect embedded JavaScript code.",
-    "split_chapters":     "Split PDF by bookmark chapters.",
+    "view": QT_TRANSLATE_NOOP("PDFree", "Open and read any PDF file."),
+    "excerpt": QT_TRANSLATE_NOOP("PDFree", "Capture regions from multiple PDFs."),
+    "split": QT_TRANSLATE_NOOP(
+        "PDFree", "Split by range, N pages, half, or chapter bookmarks."
+    ),
+    "adjust_size": QT_TRANSLATE_NOOP(
+        "PDFree", "Resize pages to A4, Letter, A3, or custom dimensions."
+    ),
+    "crop": QT_TRANSLATE_NOOP("PDFree", "Trim pages to a custom region."),
+    "merge": QT_TRANSLATE_NOOP("PDFree", "Combine multiple PDFs into one."),
+    "nup": QT_TRANSLATE_NOOP(
+        "PDFree", "Combine multiple pages onto each printed sheet."
+    ),
+    "remove": QT_TRANSLATE_NOOP("PDFree", "Delete selected pages from a PDF."),
+    "reorder": QT_TRANSLATE_NOOP("PDFree", "Drag and drop pages into a new order."),
+    "rotate": QT_TRANSLATE_NOOP("PDFree", "Rotate pages to any angle."),
+    "img_to_pdf": QT_TRANSLATE_NOOP("PDFree", "Convert images into a PDF file."),
+    "pdf_to_img": QT_TRANSLATE_NOOP("PDFree", "Export pages as PNG or JPEG files."),
+    "pdf_to_word": QT_TRANSLATE_NOOP(
+        "PDFree", "Convert PDF to an editable Word document."
+    ),
+    "pdf_to_excel": QT_TRANSLATE_NOOP(
+        "PDFree", "Extract tables from PDF into an Excel file."
+    ),
+    "ocr_pdf": QT_TRANSLATE_NOOP(
+        "PDFree", "Add a searchable text layer to scanned PDFs."
+    ),
+    "add_password": QT_TRANSLATE_NOOP("PDFree", "Encrypt PDF with a password."),
+    "add_watermark": QT_TRANSLATE_NOOP(
+        "PDFree", "Overlay custom text or image on every page."
+    ),
+    "manual_redaction": QT_TRANSLATE_NOOP(
+        "PDFree", "Permanently black out selected regions."
+    ),
+    "remove_password": QT_TRANSLATE_NOOP(
+        "PDFree", "Remove password protection from a PDF."
+    ),
+    "sanitize": QT_TRANSLATE_NOOP(
+        "PDFree", "Strip JavaScript, metadata, and hidden data."
+    ),
+    "sign": QT_TRANSLATE_NOOP(
+        "PDFree", "Sign a PDF with a PKCS#12 digital certificate."
+    ),
+    "add_image": QT_TRANSLATE_NOOP("PDFree", "Insert a PNG or JPEG image onto a page."),
+    "add_page_numbers": QT_TRANSLATE_NOOP(
+        "PDFree", "Stamp page numbers on every page."
+    ),
+    "change_metadata": QT_TRANSLATE_NOOP("PDFree", "Edit title, author, and keywords."),
+    "compare": QT_TRANSLATE_NOOP(
+        "PDFree", "Side-by-side visual or text diff of two PDFs."
+    ),
+    "extract_images": QT_TRANSLATE_NOOP(
+        "PDFree", "Pull all embedded images out of a PDF."
+    ),
+    "flatten": QT_TRANSLATE_NOOP(
+        "PDFree", "Bake annotations and form fields into static content."
+    ),
+    "headers_footers": QT_TRANSLATE_NOOP(
+        "PDFree", "Stamp custom headers and footers on every page."
+    ),
+    "remove_annotations": QT_TRANSLATE_NOOP(
+        "PDFree", "Strip all comments and markup from a PDF."
+    ),
+    "compress": QT_TRANSLATE_NOOP(
+        "PDFree", "Reduce file size with lossless or lossy presets."
+    ),
+    "batch": QT_TRANSLATE_NOOP(
+        "PDFree", "Apply one operation to multiple PDFs at once."
+    ),
+    "page_labels": QT_TRANSLATE_NOOP(
+        "PDFree", "Define custom page numbering ranges (Roman, Arabic, prefix)."
+    ),
+    "bookmarks": QT_TRANSLATE_NOOP(
+        "PDFree", "Add, remove, rename, and reorder PDF bookmarks."
+    ),
+    "pdfa": QT_TRANSLATE_NOOP(
+        "PDFree", "Export a best-effort PDF/A-1b, -2b, or -3b archive file."
+    ),
+    "html_to_pdf": QT_TRANSLATE_NOOP(
+        "PDFree", "Convert an HTML file or URL to a PDF document."
+    ),
+    "office_to_pdf": QT_TRANSLATE_NOOP(
+        "PDFree", "Convert Word, PowerPoint, or Excel files to PDF via LibreOffice."
+    ),
+    "pdf_to_csv": QT_TRANSLATE_NOOP(
+        "PDFree", "Extract tables from a PDF and export them as CSV."
+    ),
+    "form_unlock": QT_TRANSLATE_NOOP(
+        "PDFree", "Remove read-only restrictions from all AcroForm fields."
+    ),
+    "form_export": QT_TRANSLATE_NOOP(
+        "PDFree", "Export form field names, types, and values as JSON or CSV."
+    ),
+    "validate_signature": QT_TRANSLATE_NOOP(
+        "PDFree", "Verify digital signatures — trust, integrity, and timestamp."
+    ),
+    "font_info": QT_TRANSLATE_NOOP("PDFree", "Inspect all fonts embedded in a PDF."),
+    "svg_to_pdf": QT_TRANSLATE_NOOP("PDFree", "Convert SVG vector files to PDF."),
 }
 
 # ---------------------------------------------------------------------------
 # Tab filter mapping  (None = show all)
 # ---------------------------------------------------------------------------
 TAB_CATEGORIES = {
-    "All Tools": None,
-    "Convert":   {"Convert to PDF", "Convert from PDF"},
-    "Edit":      {"Core", "Organize", "View & Edit", "Advanced"},
-    "Protect":   {"Sign & Security"},
+    QT_TRANSLATE_NOOP("PDFree", "All Tools"): None,
+    QT_TRANSLATE_NOOP("PDFree", "Convert"): {"Convert to PDF", "Convert from PDF"},
+    QT_TRANSLATE_NOOP("PDFree", "Edit"): {
+        "Core",
+        "Organize",
+        "View & Edit",
+        "Advanced",
+    },
+    QT_TRANSLATE_NOOP("PDFree", "Protect"): {"Sign & Security"},
 }
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _lighten(hex_color: str, factor: float = 0.55) -> str:
     c = QColor(hex_color)
-    r = int(c.red()   + (255 - c.red())   * factor)
+    r = int(c.red() + (255 - c.red()) * factor)
     g = int(c.green() + (255 - c.green()) * factor)
-    b = int(c.blue()  + (255 - c.blue())  * factor)
+    b = int(c.blue() + (255 - c.blue()) * factor)
     return QColor(r, g, b).name()
 
 
 # ---------------------------------------------------------------------------
 # Custom paint widgets
 # ---------------------------------------------------------------------------
+
 
 class PDFIconWidget(QWidget):
     """Line-art PDF page icon drawn with QPainter (no external assets).
@@ -222,12 +454,18 @@ class PDFIconWidget(QWidget):
 
     _PAGE_H_RATIO = 0.72  # used only when draw_arrow=True
 
-    def __init__(self, w: int = 28, h: int = 34,
-                 color: str = BLUE_ACCENT, bg: str = BG,
-                 draw_arrow: bool = False, parent=None):
+    def __init__(
+        self,
+        w: int = 28,
+        h: int = 34,
+        color: str = BLUE_ACCENT,
+        bg: str = BG,
+        draw_arrow: bool = False,
+        parent=None,
+    ):
         super().__init__(parent)
-        self._color      = QColor(color)
-        self._bg         = QColor(bg)
+        self._color = QColor(color)
+        self._bg = QColor(bg)
         self._draw_arrow = draw_arrow
         self.setFixedSize(w, h)
 
@@ -236,9 +474,13 @@ class PDFIconWidget(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), self._bg)
 
-        W      = self.width()
-        H_page = int(self.height() * self._PAGE_H_RATIO) if self._draw_arrow else self.height()
-        fold   = W * 0.30
+        W = self.width()
+        H_page = (
+            int(self.height() * self._PAGE_H_RATIO)
+            if self._draw_arrow
+            else self.height()
+        )
+        fold = W * 0.30
         p.setPen(QPen(self._color, 1.5))
         p.setBrush(QColor(WHITE))
 
@@ -274,11 +516,13 @@ class RoundedIconWidget(QWidget):
 
     def __init__(self, icon: str, color: str, size: int = 46, parent=None):
         super().__init__(parent)
-        self._icon  = icon
+        self._icon = icon
         self._color = QColor(color)
         self.setFixedSize(size, size)
         icon_px = int(size * 0.52)
-        self._pixmap = svg_pixmap(icon, "#FFFFFF", icon_px) if is_svg_icon(icon) else None
+        self._pixmap = (
+            svg_pixmap(icon, "#FFFFFF", icon_px) if is_svg_icon(icon) else None
+        )
 
     def paintEvent(self, _event):
         p = QPainter(self)
@@ -287,7 +531,7 @@ class RoundedIconWidget(QWidget):
         p.setBrush(self._color)
         p.drawRoundedRect(self.rect(), 8, 8)
         if self._pixmap and not self._pixmap.isNull():
-            x = (self.width()  - self._pixmap.width())  // 2
+            x = (self.width() - self._pixmap.width()) // 2
             y = (self.height() - self._pixmap.height()) // 2
             p.drawPixmap(x, y, self._pixmap)
         else:
@@ -311,29 +555,31 @@ class QuickStartZone(QWidget):
         lay.setContentsMargins(0, 16, 0, 10)
         lay.setSpacing(0)
 
-        icon = PDFIconWidget(38, 64, color=BLUE_ACCENT, bg=QS_BG, draw_arrow=True)
+        icon = PDFIconWidget(
+            38, 64, color=colors.BLUE_ACCENT, bg=colors.QS_BG, draw_arrow=True
+        )
         lay.addWidget(icon, 0, Qt.AlignmentFlag.AlignHCenter)
         lay.addSpacing(4)
 
-        drag_lbl = QLabel("Drag & Drop your PDF here")
+        drag_lbl = QLabel(tr("Drag & Drop your PDF here"))
         drag_lbl.setStyleSheet(
-            f"color: {G700}; font: bold 14px 'Segoe UI'; background: transparent;"
+            f"color: {colors.G700}; font: bold 14px 'Segoe UI'; background: transparent;"
         )
         drag_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         lay.addWidget(drag_lbl, 0, Qt.AlignmentFlag.AlignHCenter)
         lay.addSpacing(6)
 
-        browse_btn = QPushButton("Or click to browse")
+        browse_btn = QPushButton(tr("Or click to browse"))
         browse_btn.setFixedSize(160, 30)
         browse_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {WHITE};
-                color: {G600};
-                border: 1px solid {G300};
+                background: {colors.WHITE};
+                color: {colors.G600};
+                border: 1px solid {colors.G300};
                 border-radius: 15px;
                 font: 11px 'Segoe UI';
             }}
-            QPushButton:hover {{ background: {G100}; }}
+            QPushButton:hover {{ background: {colors.G100}; }}
         """)
         browse_btn.clicked.connect(self._browse)
         lay.addWidget(browse_btn, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -341,14 +587,16 @@ class QuickStartZone(QWidget):
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), QColor(QS_BG))
-        pen = QPen(QColor(BLUE_ACCENT), 1, Qt.PenStyle.CustomDashLine)
+        p.fillRect(self.rect(), QColor(colors.QS_BG))
+        pen = QPen(QColor(colors.BLUE_ACCENT), 1, Qt.PenStyle.CustomDashLine)
         pen.setDashPattern([6.0, 4.0])
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
         pad = 6
         path = QPainterPath()
-        path.addRoundedRect(pad, pad, self.width() - 2 * pad, self.height() - 2 * pad, 12, 12)
+        path.addRoundedRect(
+            pad, pad, self.width() - 2 * pad, self.height() - 2 * pad, 12, 12
+        )
         p.drawPath(path)
 
     def _browse(self):
@@ -373,21 +621,28 @@ class ToolCard(QFrame):
 
     clicked = Signal(str)  # emits tool_id
 
-    def __init__(self, tool_id: str, name: str, icon: str,
-                 color: str, implemented: bool, parent=None):
+    def __init__(
+        self,
+        tool_id: str,
+        name: str,
+        icon: str,
+        color: str,
+        implemented: bool,
+        parent=None,
+    ):
         super().__init__(parent)
-        self._tool_id     = tool_id
+        self._tool_id = tool_id
         self._implemented = implemented
 
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setObjectName("ToolCard")
-        self._style_normal  = f"""
+        self._style_normal = f"""
             QFrame#ToolCard {{
-                background: {WHITE}; border-radius: 12px; border: 1px solid {G200};
+                background: {colors.WHITE}; border-radius: 12px; border: 1px solid {colors.G200};
             }}"""
         self._style_hovered = f"""
             QFrame#ToolCard {{
-                background: {WHITE}; border-radius: 12px; border: 1px solid {G300};
+                background: {colors.WHITE}; border-radius: 12px; border: 1px solid {colors.G300};
             }}"""
         self.setStyleSheet(self._style_normal)
 
@@ -399,24 +654,27 @@ class ToolCard(QFrame):
         lay.setSpacing(12)
 
         icon_color = color if implemented else _lighten(color, 0.55)
-        lay.addWidget(RoundedIconWidget(icon, icon_color, 46), 0,
-                      Qt.AlignmentFlag.AlignTop)
+        lay.addWidget(
+            RoundedIconWidget(icon, icon_color, 46), 0, Qt.AlignmentFlag.AlignTop
+        )
 
         text_lay = QVBoxLayout()
         text_lay.setSpacing(2)
         text_lay.setContentsMargins(0, 0, 0, 0)
 
-        name_lbl = QLabel(name)
+        name_lbl = QLabel(tr(name))
         name_lbl.setWordWrap(True)
         name_lbl.setStyleSheet(
-            f"color: {G700 if implemented else G400}; "
+            f"color: {colors.G700 if implemented else colors.G400}; "
             f"font: bold 13px 'Segoe UI'; background: transparent;"
         )
         text_lay.addWidget(name_lbl)
 
-        desc_text  = TOOL_DESCRIPTIONS.get(tool_id, "") if implemented else "Coming Soon"
-        desc_color = G500 if implemented else SOON_TXT
-        desc_lbl   = QLabel(desc_text)
+        desc_text = (
+            tr(TOOL_DESCRIPTIONS.get(tool_id, "")) if implemented else tr("Coming Soon")
+        )
+        desc_color = colors.G500 if implemented else colors.SOON_TXT
+        desc_lbl = QLabel(desc_text)
         desc_lbl.setWordWrap(True)
         desc_lbl.setStyleSheet(
             f"color: {desc_color}; font: 11px 'Segoe UI'; background: transparent;"
@@ -448,13 +706,13 @@ class RecentCard(QFrame):
 
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setObjectName("RecentCard")
-        self._style_normal  = f"""
+        self._style_normal = f"""
             QFrame#RecentCard {{
-                background: {WHITE}; border-radius: 12px; border: 1px solid {G200};
+                background: {colors.WHITE}; border-radius: 12px; border: 1px solid {colors.G200};
             }}"""
         self._style_hovered = f"""
             QFrame#RecentCard {{
-                background: {WHITE}; border-radius: 12px; border: 1px solid {G300};
+                background: {colors.WHITE}; border-radius: 12px; border: 1px solid {colors.G300};
             }}"""
         self.setStyleSheet(self._style_normal)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -469,17 +727,17 @@ class RecentCard(QFrame):
         text_lay.setSpacing(2)
         text_lay.setContentsMargins(0, 0, 0, 0)
 
-        name_lbl = QLabel(name)
+        name_lbl = QLabel(tr(name))
         name_lbl.setStyleSheet(
-            f"color: {G700}; font: bold 13px 'Segoe UI'; background: transparent;"
+            f"color: {colors.G700}; font: bold 13px 'Segoe UI'; background: transparent;"
         )
         text_lay.addWidget(name_lbl)
 
-        desc = TOOL_DESCRIPTIONS.get(tool_id, "")
+        desc = tr(TOOL_DESCRIPTIONS.get(tool_id, ""))
         if desc:
             desc_lbl = QLabel(desc)
             desc_lbl.setStyleSheet(
-                f"color: {G500}; font: 11px 'Segoe UI'; background: transparent;"
+                f"color: {colors.G500}; font: 11px 'Segoe UI'; background: transparent;"
             )
             text_lay.addWidget(desc_lbl)
 
@@ -500,8 +758,8 @@ class RecentCard(QFrame):
 # Main Application
 # ═══════════════════════════════════════════════════════════════════════════
 
-class PDFreeApp(QMainWindow):
 
+class PDFreeApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PDFree")
@@ -514,6 +772,7 @@ class PDFreeApp(QMainWindow):
         if os.path.exists(_logo_path):
             if _logo_path.endswith(".svg"):
                 from PySide6.QtSvg import QSvgRenderer
+
                 _svg_r = QSvgRenderer(_logo_path)
                 _ico_pm = QPixmap(256, 256)
                 _ico_pm.fill(Qt.GlobalColor.transparent)
@@ -525,24 +784,23 @@ class PDFreeApp(QMainWindow):
                 self.setWindowIcon(QIcon(_logo_path))
 
         self._current_tool: object = None
-        self._active_tab           = "All Tools"
+        self._active_tab = "All Tools"
         self._tab_buttons: dict[str, tuple[QPushButton, QFrame]] = {}
-        self._all_tool_data: list  = []
-        self._grid_layout: QGridLayout | None  = None
-        self._grid_widget: QWidget | None      = None
-        self._search_entry: QLineEdit | None   = None
-        self._home_nav_btns: dict              = {}
-        self._home_active_nav: str             = "dashboard"
+        self._all_tool_data: list = []
+        self._grid_widget: QWidget | None = None
+        self._search_entry: QLineEdit | None = None
+        self._home_nav_btns: dict = {}
+        self._home_active_nav: str = "dashboard"
 
         # Library view state
-        self._lib_nav_key: str          = "all_files"
-        self._lib_search_q: str         = ""
-        self._lib_scroll                = None   # QScrollArea (library index 2)
-        self._sel_wrap                  = None   # QWidget selection bar
-        self._sel_count_lbl             = None   # QLabel in sel bar
-        self._lib_search_edit           = None   # QLineEdit in header
-        self._selected_files: set       = set()
-        self._fol_list_lay              = None   # QVBoxLayout of sidebar folder list
+        self._lib_nav_key: str = "all_files"
+        self._lib_search_q: str = ""
+        self._lib_scroll = None  # QScrollArea (library index 2)
+        self._sel_wrap = None  # QWidget selection bar
+        self._sel_count_lbl = None  # QLabel in sel bar
+        self._lib_search_edit = None  # QLineEdit in header
+        self._selected_files: set = set()
+        self._fol_list_lay = None  # QVBoxLayout of sidebar folder list
 
         self._lib_search_timer = QTimer(self)
         self._lib_search_timer.setSingleShot(True)
@@ -551,6 +809,10 @@ class PDFreeApp(QMainWindow):
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._render_tool_grid)
+
+        # F11 fullscreen toggle
+        fs_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F11), self)
+        fs_shortcut.activated.connect(self._toggle_fullscreen)
 
         # Index 0 = home,  Index 1 = tool view
         self._stack = QStackedWidget()
@@ -568,7 +830,7 @@ class PDFreeApp(QMainWindow):
             if callable(fn):
                 try:
                     fn()
-                except Exception:
+                except RuntimeError:
                     pass
             self._current_tool = None
 
@@ -591,6 +853,7 @@ class PDFreeApp(QMainWindow):
         tool = self._current_tool
         pdf_name = getattr(tool, "pdf_path", "") or "this PDF"
         import os as _os
+
         pdf_name = _os.path.basename(pdf_name) if pdf_name else "this PDF"
 
         box = QMessageBox(self)
@@ -598,9 +861,9 @@ class PDFreeApp(QMainWindow):
         box.setText(f"<b>{pdf_name}</b> has unsaved changes.")
         box.setInformativeText("Do you want to save before closing?")
         box.setIcon(QMessageBox.Icon.Warning)
-        save_btn    = box.addButton("Save",    QMessageBox.ButtonRole.AcceptRole)
-        discard_btn = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
-        cancel_btn  = box.addButton("Cancel",  QMessageBox.ButtonRole.RejectRole)
+        save_btn = box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(save_btn)
         box.exec()
 
@@ -623,25 +886,65 @@ class PDFreeApp(QMainWindow):
         if self._prompt_save():
             self.show_home()
 
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def _toggle_theme(self) -> None:
+        from theme import apply_theme, is_dark
+
+        apply_theme(not is_dark())
+        QApplication.instance().setStyleSheet(_scrollbar_css())
+        self._rebuild_home()
+
+    def _rebuild_home(self) -> None:
+        # Reset home-screen state so the freshly built widgets start clean.
+        self._search_timer.stop()
+        self._tab_buttons.clear()
+        self._all_tool_data.clear()
+        self._active_tab = "All Tools"
+        self._grid_widget = None
+        self._search_entry = None
+        self._home_nav_btns = {}
+        self._home_active_nav = "dashboard"
+        self._lib_nav_key = "all_files"
+        self._lib_search_q = ""
+        self._lib_scroll = None
+        self._sel_wrap = None
+        self._sel_count_lbl = None
+        self._lib_search_edit = None
+        self._selected_files = set()
+        self._fol_list_lay = None
+
+        old_home = self._stack.widget(0)
+        new_home = self._build_home()
+        self._stack.insertWidget(0, new_home)
+        self._stack.removeWidget(old_home)
+        old_home.deleteLater()
+        # Stay on whichever screen was active (home or tool)
+        if self._stack.currentIndex() != 1:
+            self._stack.setCurrentIndex(0)
+
     def show_home(self):
         self._cleanup_tool()
         self._search_timer.stop()
         self._tab_buttons.clear()
         self._all_tool_data.clear()
-        self._active_tab        = "All Tools"
-        self._grid_layout       = None
-        self._grid_widget       = None
-        self._search_entry      = None
-        self._home_nav_btns     = {}
-        self._home_active_nav   = "dashboard"
-        self._lib_nav_key       = "all_files"
-        self._lib_search_q      = ""
-        self._lib_scroll        = None
-        self._sel_wrap          = None
-        self._sel_count_lbl     = None
-        self._lib_search_edit   = None
-        self._selected_files    = set()
-        self._fol_list_lay      = None
+        self._active_tab = "All Tools"
+        self._grid_widget = None
+        self._search_entry = None
+        self._home_nav_btns = {}
+        self._home_active_nav = "dashboard"
+        self._lib_nav_key = "all_files"
+        self._lib_search_q = ""
+        self._lib_scroll = None
+        self._sel_wrap = None
+        self._sel_count_lbl = None
+        self._lib_search_edit = None
+        self._selected_files = set()
+        self._fol_list_lay = None
 
         while self._stack.count():
             w = self._stack.widget(0)
@@ -660,16 +963,25 @@ class PDFreeApp(QMainWindow):
         if path:
             try:
                 from library_page import LibraryState
+
                 LibraryState().track(path)
-            except Exception:
+            except OSError:
                 pass
 
         if tool_id not in IMPLEMENTED:
             QMessageBox.information(
-                self, "Coming Soon",
+                self,
+                "Coming Soon",
                 "This tool is not yet implemented.\nStay tuned for future updates!",
             )
             return
+
+        try:
+            from library_page import LibraryState
+
+            LibraryState().track_tool(tool_id)
+        except Exception:
+            pass
 
         self._cleanup_tool()
 
@@ -688,7 +1000,7 @@ class PDFreeApp(QMainWindow):
 
     def _build_home(self) -> QWidget:
         root = QWidget()
-        root.setStyleSheet("background: #FFFFFF;")
+        root.setStyleSheet(f"background: {colors.WHITE};")
         root_lay = QHBoxLayout(root)
         root_lay.setContentsMargins(0, 0, 0, 0)
         root_lay.setSpacing(0)
@@ -697,7 +1009,7 @@ class PDFreeApp(QMainWindow):
         root_lay.addWidget(sidebar)
 
         right = QWidget()
-        right.setStyleSheet("background: #FFFFFF;")
+        right.setStyleSheet(f"background: {colors.WHITE};")
         right_lay = QVBoxLayout(right)
         right_lay.setContentsMargins(0, 0, 0, 0)
         right_lay.setSpacing(0)
@@ -705,10 +1017,10 @@ class PDFreeApp(QMainWindow):
         right_lay.addWidget(self._build_home_header())
 
         self._home_stack = QStackedWidget()
-        self._home_stack.setStyleSheet("background: #FFFFFF;")
+        self._home_stack.setStyleSheet(f"background: {colors.WHITE};")
         self._home_stack.addWidget(self._build_dashboard_content())  # 0: dashboard
-        self._home_stack.addWidget(self._build_tools_content())       # 1: all tools
-        self._home_stack.addWidget(self._build_library_page())        # 2: library views
+        self._home_stack.addWidget(self._build_tools_content())  # 1: all tools
+        self._home_stack.addWidget(self._build_library_page())  # 2: library views
         right_lay.addWidget(self._home_stack, 1)
 
         root_lay.addWidget(right, 1)
@@ -722,7 +1034,7 @@ class PDFreeApp(QMainWindow):
         bar = QFrame()
         bar.setFixedHeight(64)
         bar.setStyleSheet(
-            "QFrame { background: #FFFFFF; border-bottom: 1px solid #e2e8f0; }"
+            f"QFrame {{ background: {colors.WHITE}; border-bottom: 1px solid {colors.HOME_BORDER}; }}"
         )
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(32, 0, 32, 0)
@@ -732,22 +1044,24 @@ class PDFreeApp(QMainWindow):
         search_frame = QFrame()
         search_frame.setFixedHeight(42)
         search_frame.setStyleSheet(
-            "QFrame { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; }"
+            f"QFrame {{ background: {colors.HOME_SEARCH_BG}; border: 1px solid {colors.HOME_BORDER}; border-radius: 4px; }}"
         )
-        search_frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        search_frame.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         sf_lay = QHBoxLayout(search_frame)
         sf_lay.setContentsMargins(12, 0, 12, 0)
         sf_lay.setSpacing(8)
 
         search_icon = QLabel()
-        search_icon.setPixmap(svg_pixmap("search", "#718096", 16))
+        search_icon.setPixmap(svg_pixmap("search", colors.G500, 16))
         search_icon.setStyleSheet("background: transparent; border: none;")
         sf_lay.addWidget(search_icon)
 
         search_input = QLineEdit()
         search_input.setPlaceholderText("Search for documents...")
         search_input.setStyleSheet(
-            "QLineEdit { background: transparent; border: none; color: #6b7280; font: 14px 'Segoe UI'; }"
+            f"QLineEdit {{ background: transparent; border: none; color: {colors.HOME_SEARCH_TXT}; font: 14px 'Segoe UI'; }}"
         )
         search_input.textChanged.connect(self._on_lib_search)
         self._lib_search_edit = search_input
@@ -758,23 +1072,44 @@ class PDFreeApp(QMainWindow):
 
         # Right controls
         upload_btn = QPushButton("  Upload New")
-        upload_btn.setIcon(svg_icon("upload", "#FFFFFF", 15))
+        upload_btn.setIcon(svg_icon("upload", colors.WHITE, 15))
         upload_btn.setIconSize(QSize(15, 15))
         upload_btn.setFixedHeight(36)
         upload_btn.setStyleSheet(
-            "QPushButton { background: #4a627b; color: #FFFFFF; border: none; "
-            "border-radius: 4px; font: bold 14px 'Segoe UI'; padding: 0 16px; }"
-            "QPushButton:hover { background: #3d5266; }"
+            f"QPushButton {{ background: {colors.BRAND}; color: {colors.WHITE}; border: none; "
+            f"border-radius: 4px; font: bold 14px 'Segoe UI'; padding: 0 16px; }}"
+            f"QPushButton:hover {{ background: {colors.BRAND_HOVER}; }}"
         )
         upload_btn.clicked.connect(self._upload_new)
         lay.addWidget(upload_btn)
+
+        theme_btn = QPushButton()
+        theme_btn.setFixedSize(36, 36)
+        theme_btn.setToolTip("Toggle dark/light theme")
+        _is_dark = False
+        try:
+            from theme import is_dark as _id
+
+            _is_dark = _id()
+        except Exception:
+            pass
+        theme_btn.setIcon(svg_icon("moon" if not _is_dark else "sun", colors.G500, 18))
+        theme_btn.setIconSize(QSize(18, 18))
+        theme_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: 1px solid {colors.HOME_BORDER};"
+            f" border-radius: 6px; }}"
+            f"QPushButton:hover {{ background: {colors.G100}; }}"
+        )
+        theme_btn.clicked.connect(self._toggle_theme)
+        lay.addSpacing(8)
+        lay.addWidget(theme_btn)
         return bar
 
     def _build_home_sidebar(self) -> QWidget:
         sidebar = QFrame()
         sidebar.setFixedWidth(256)
         sidebar.setStyleSheet(
-            "QFrame { background: #f0f4f8; border-right: 1px solid #e2e8f0; }"
+            f"QFrame {{ background: {colors.SIDEBAR_BG}; border-right: 1px solid {colors.HOME_BORDER}; }}"
         )
         sidebar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
@@ -785,7 +1120,7 @@ class PDFreeApp(QMainWindow):
         # Logo header
         logo_wrap = QFrame()
         logo_wrap.setStyleSheet(
-            "QFrame { background: transparent; border-bottom: 1px solid #e2e8f0; border-right: none; }"
+            f"QFrame {{ background: transparent; border-bottom: 1px solid {colors.HOME_BORDER}; border-right: none; }}"
         )
         lw_lay = QHBoxLayout(logo_wrap)
         lw_lay.setContentsMargins(16, 16, 16, 16)
@@ -795,6 +1130,7 @@ class PDFreeApp(QMainWindow):
         _lp_png = resource_path("LOGO.png")
         if os.path.exists(_lp_svg):
             from PySide6.QtSvgWidgets import QSvgWidget
+
             logo_badge = QSvgWidget(_lp_svg)
             logo_badge.setFixedSize(56, 56)
             logo_badge.setStyleSheet("background: transparent; border: none;")
@@ -804,14 +1140,18 @@ class PDFreeApp(QMainWindow):
             logo_badge.setStyleSheet("background: transparent; border: none;")
             if os.path.exists(_lp_png):
                 logo_badge.setPixmap(
-                    QPixmap(_lp_png).scaled(160, 60, Qt.AspectRatioMode.KeepAspectRatio,
-                                            Qt.TransformationMode.SmoothTransformation)
+                    QPixmap(_lp_png).scaled(
+                        160,
+                        60,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
                 )
         lw_lay.setSpacing(10)
         lw_lay.addWidget(logo_badge)
         logo_txt = QLabel("PDFree")
         logo_txt.setStyleSheet(
-            "color: #111827; font: bold 18px 'Segoe UI';"
+            f"color: {colors.G900}; font: bold 18px 'Segoe UI';"
             " background: transparent; border: none;"
         )
         lw_lay.addWidget(logo_txt)
@@ -839,7 +1179,7 @@ class PDFreeApp(QMainWindow):
             lbl = QLabel(text)
             lbl.setContentsMargins(12, 0, 12, 0)
             lbl.setStyleSheet(
-                "color: #718096; font: bold 10px 'Segoe UI'; letter-spacing: 0.5px; background: transparent;"
+                f"color: {colors.G500}; font: bold 10px 'Segoe UI'; letter-spacing: 0.5px; background: transparent;"
             )
             return lbl
 
@@ -868,7 +1208,7 @@ class PDFreeApp(QMainWindow):
         for key, label in [
             ("dashboard", "Dashboard"),
             ("all_files", "All Files"),
-            ("recent",    "Recent"),
+            ("recent", "Recent"),
             ("favorites", "Favorites"),
         ]:
             grp_lay.addWidget(_nav(key, label))
@@ -889,15 +1229,15 @@ class PDFreeApp(QMainWindow):
         fh_lay.setSpacing(0)
         fh_lbl = QLabel("FOLDERS")
         fh_lbl.setStyleSheet(
-            "color: #718096; font: bold 10px 'Segoe UI'; letter-spacing: 0.5px; background: transparent;"
+            f"color: {colors.G500}; font: bold 10px 'Segoe UI'; letter-spacing: 0.5px; background: transparent;"
         )
         fh_lay.addWidget(fh_lbl)
         fh_lay.addStretch()
         fh_add = QPushButton("+")
         fh_add.setFixedSize(18, 18)
         fh_add.setStyleSheet(
-            "QPushButton { background: transparent; color: #718096; border: none; font: bold 14px; }"
-            "QPushButton:hover { color: #1a202c; }"
+            f"QPushButton {{ background: transparent; color: {colors.G500}; border: none; font: bold 14px; }}"
+            f"QPushButton:hover {{ color: {colors.HOME_TEXT}; }}"
         )
         fh_add.clicked.connect(self._add_folder)
         fh_lay.addWidget(fh_add)
@@ -909,7 +1249,7 @@ class PDFreeApp(QMainWindow):
         self._fol_list_lay = QVBoxLayout(fol_list)
         self._fol_list_lay.setContentsMargins(0, 0, 0, 0)
         self._fol_list_lay.setSpacing(4)
-        self._rebuild_folder_nav()   # populate from LibraryState
+        self._rebuild_folder_nav()  # populate from LibraryState
 
         fol_lay.addWidget(fol_list)
         nav_lay.addWidget(fol)
@@ -926,9 +1266,9 @@ class PDFreeApp(QMainWindow):
         nf_btn.setIconSize(QSize(15, 15))
         nf_btn.setFixedHeight(40)
         nf_btn.setStyleSheet(
-            "QPushButton { background: #4a627b; color: #FFFFFF; border: none; "
-            "border-radius: 4px; font: bold 14px 'Segoe UI'; }"
-            "QPushButton:hover { background: #3d5266; }"
+            f"QPushButton {{ background: {colors.BRAND}; color: {colors.WHITE}; border: none; "
+            f"border-radius: 4px; font: bold 14px 'Segoe UI'; }}"
+            f"QPushButton:hover {{ background: {colors.BRAND_HOVER}; }}"
         )
         nf_btn.clicked.connect(self._add_folder)
         fw_lay.addWidget(nf_btn)
@@ -937,18 +1277,20 @@ class PDFreeApp(QMainWindow):
         return sidebar
 
     def _home_nav_style(self, key: str) -> str:
+        import colors as _c
+
         is_active = getattr(self, "_home_active_nav", "dashboard") == key
         if is_active:
             return (
-                "QPushButton { background: #FFFFFF; color: #1a202c; "
-                "font: bold 14px 'Segoe UI'; border: 1px solid rgba(226,232,240,0.5); "
+                f"QPushButton {{ background: {_c.WHITE}; color: {_c.HOME_TEXT}; "
+                f"font: bold 14px 'Segoe UI'; border: 1px solid {_c.HOME_BORDER}; "
                 "border-radius: 4px; text-align: left; padding: 0 13px; }"
             )
         return (
-            "QPushButton { background: transparent; color: #1a202c; "
+            f"QPushButton {{ background: transparent; color: {_c.HOME_TEXT}; "
             "font: 14px 'Segoe UI'; border: none; "
-            "border-radius: 4px; text-align: left; padding: 0 12px; }"
-            "QPushButton:hover { background: rgba(255,255,255,0.5); }"
+            f"border-radius: 4px; text-align: left; padding: 0 12px; }}"
+            f"QPushButton:hover {{ background: {_c.G100}; }}"
         )
 
     def _set_home_nav(self, key: str):
@@ -956,6 +1298,7 @@ class PDFreeApp(QMainWindow):
         for k, btn in self._home_nav_btns.items():
             btn.setStyleSheet(self._home_nav_style(k))
         if key == "dashboard":
+            self._refresh_quick_tools()
             self._home_stack.setCurrentIndex(0)
         elif key == "all_tools":
             self._home_stack.setCurrentIndex(1)
@@ -974,10 +1317,10 @@ class PDFreeApp(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setStyleSheet(
-            "QScrollArea { background: #FFFFFF; border: none; }"
+            f"QScrollArea {{ background: {colors.WHITE}; border: none; }}"
         )
         content = QWidget()
-        content.setStyleSheet("background: #FFFFFF;")
+        content.setStyleSheet(f"background: {colors.WHITE};")
         scroll.setWidget(content)
 
         lay = QVBoxLayout(content)
@@ -1002,77 +1345,99 @@ class PDFreeApp(QMainWindow):
         h_lay = QHBoxLayout(hdr)
         h_lay.setContentsMargins(0, 0, 0, 0)
         t = QLabel("Quick Tools")
-        t.setStyleSheet("color: #1a202c; font: bold 16px 'Segoe UI'; background: transparent;")
+        t.setStyleSheet(
+            f"color: {colors.HOME_TEXT}; font: bold 16px 'Segoe UI'; background: transparent;"
+        )
         h_lay.addWidget(t)
         h_lay.addStretch()
         va = QPushButton("VIEW ALL TOOLS")
         va.setStyleSheet(
-            "QPushButton { background: transparent; color: #4a627b; border: none; "
-            "font: bold 12px 'Segoe UI'; letter-spacing: 0.6px; }"
-            "QPushButton:hover { color: #1a202c; }"
+            f"QPushButton {{ background: transparent; color: {colors.BRAND}; border: none; "
+            f"font: bold 12px 'Segoe UI'; letter-spacing: 0.6px; }}"
+            f"QPushButton:hover {{ color: {colors.HOME_TEXT}; }}"
         )
         va.clicked.connect(lambda: self._home_stack.setCurrentIndex(1))
         h_lay.addWidget(va)
         s_lay.addWidget(hdr)
 
-        QUICK = [
-            ("split",  "Split PDF",    "scissors", "Extract or separate pages into individual files."),
-            ("view",   "View PDF",     "eye",       "High-resolution viewer with markup tools."),
-            ("excerpt","Excerpt Tool", "copy",      "Select and extract specific text snippets."),
-            ("merge",  "Merge Doc",    "merge",     "Combine multiple files into one document."),
-        ]
-        cards_row = QWidget()
-        cards_row.setStyleSheet("background: transparent;")
-        cr = QHBoxLayout(cards_row)
-        cr.setContentsMargins(0, 0, 0, 0)
-        cr.setSpacing(16)
-        for tid, tname, ticon, tdesc in QUICK:
-            cr.addWidget(self._make_quick_tool_card(tid, tname, ticon, tdesc), 1)
-        s_lay.addWidget(cards_row)
+        self._quick_tools_row = QWidget()
+        self._quick_tools_row.setStyleSheet("background: transparent;")
+        s_lay.addWidget(self._quick_tools_row)
+        self._refresh_quick_tools()
         return section
 
-    def _make_quick_tool_card(self, tid: str, name: str, icon: str, desc: str) -> QFrame:
+    def _tool_meta(self, tool_id: str) -> tuple[str, str, str]:
+        """Return (display_name, icon, category_color) for a tool_id."""
+        for cat in CATEGORIES:
+            for tid, tname, ticon in cat["tools"]:
+                if tid == tool_id:
+                    return tname, ticon, cat["color"]
+        return tool_id, "file-text", BLUE_ACCENT
+
+    def _refresh_quick_tools(self) -> None:
+        if not hasattr(self, "_quick_tools_row") or self._quick_tools_row is None:
+            return
+        old_lay = self._quick_tools_row.layout()
+        if old_lay is not None:
+            while old_lay.count():
+                item = old_lay.takeAt(0)
+                if item and item.widget():
+                    item.widget().deleteLater()
+        else:
+            old_lay = QHBoxLayout(self._quick_tools_row)
+            old_lay.setContentsMargins(0, 0, 0, 0)
+            old_lay.setSpacing(16)
+
+        try:
+            from library_page import LibraryState
+
+            top = LibraryState().top_tools(4)
+        except Exception:
+            top = ["view", "split", "merge", "excerpt"]
+
+        for tid in top:
+            tname, ticon, color = self._tool_meta(tid)
+            desc = tr(TOOL_DESCRIPTIONS.get(tid, ""))
+            old_lay.addWidget(
+                self._make_quick_tool_card(tid, tname, ticon, color, desc), 1
+            )
+
+    def _make_quick_tool_card(
+        self, tid: str, name: str, icon: str, color: str, desc: str
+    ) -> QFrame:
         card = QFrame()
         card.setObjectName("QTCard")
         card.setMinimumHeight(157)
-        card.setStyleSheet(
-            "QFrame#QTCard { background: #FFFFFF; border: 1px solid #e2e8f0; border-radius: 8px; }"
-        )
-        card.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         card.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        card._style_normal = f"QFrame#QTCard {{ background: {colors.WHITE}; border: 1px solid {colors.HOME_BORDER}; border-radius: 8px; }}"
+        card._style_hovered = f"QFrame#QTCard {{ background: {colors.WHITE}; border: 1px solid {colors.G300}; border-radius: 8px; }}"
+        card.setStyleSheet(card._style_normal)
+        card.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
         c_lay = QVBoxLayout(card)
         c_lay.setContentsMargins(21, 21, 21, 21)
         c_lay.setSpacing(12)
 
-        icon_box = QFrame()
-        icon_box.setFixedSize(40, 40)
-        icon_box.setStyleSheet(
-            "QFrame { background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 4px; }"
+        c_lay.addWidget(
+            RoundedIconWidget(icon, color, 46), 0, Qt.AlignmentFlag.AlignLeft
         )
-        ib_lay = QHBoxLayout(icon_box)
-        ib_lay.setContentsMargins(0, 0, 0, 0)
-        ic = QLabel()
-        ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        if is_svg_icon(icon):
-            ic.setPixmap(svg_pixmap(icon, "#4a627b", 22))
-            ic.setStyleSheet("background: transparent; border: none;")
-        else:
-            ic.setText(icon)
-            ic.setStyleSheet("background: transparent; border: none; font: 18px; color: #4a627b;")
-        ib_lay.addWidget(ic)
-        c_lay.addWidget(icon_box, 0, Qt.AlignmentFlag.AlignLeft)
 
-        n_lbl = QLabel(name)
-        n_lbl.setStyleSheet("color: #1a202c; font: bold 14px 'Segoe UI'; background: transparent;")
+        n_lbl = QLabel(tr(name))
+        n_lbl.setStyleSheet(
+            f"color: {colors.G900}; font: bold 14px 'Segoe UI'; background: transparent;"
+        )
         c_lay.addWidget(n_lbl)
 
         d_lbl = QLabel(desc)
         d_lbl.setWordWrap(True)
-        d_lbl.setStyleSheet("color: #718096; font: 12px 'Segoe UI'; background: transparent;")
+        d_lbl.setStyleSheet(
+            f"color: {colors.G500}; font: 12px 'Segoe UI'; background: transparent;"
+        )
         c_lay.addWidget(d_lbl)
         c_lay.addStretch()
 
+        card.enterEvent = lambda e, c=card: c.setStyleSheet(c._style_hovered)
+        card.leaveEvent = lambda e, c=card: c.setStyleSheet(c._style_normal)
         card.mousePressEvent = lambda e, t=tid: (
             self.show_tool(t) if e.button() == Qt.MouseButton.LeftButton else None
         )
@@ -1083,36 +1448,23 @@ class PDFreeApp(QMainWindow):
         section.setStyleSheet("background: transparent;")
         s_lay = QVBoxLayout(section)
         s_lay.setContentsMargins(0, 0, 0, 0)
-        s_lay.setSpacing(24)
+        s_lay.setSpacing(16)
 
-        # Tab bar
-        tab_bar = QFrame()
-        tab_bar.setStyleSheet(
-            "QFrame { background: transparent; border-bottom: 1px solid #e2e8f0; border-radius: 0; }"
+        hdr = QWidget()
+        hdr.setStyleSheet("background: transparent;")
+        h_lay = QHBoxLayout(hdr)
+        h_lay.setContentsMargins(0, 0, 0, 0)
+        t = QLabel("Recent Folders")
+        t.setStyleSheet(
+            f"color: {colors.HOME_TEXT}; font: bold 16px 'Segoe UI'; background: transparent;"
         )
-        tb_lay = QHBoxLayout(tab_bar)
-        tb_lay.setContentsMargins(0, 0, 0, 0)
-        tb_lay.setSpacing(24)
-        for i, t in enumerate(["Recent Folders"]):
-            btn = QPushButton(t)
-            btn.setFixedHeight(36)
-            if i == 0:
-                btn.setStyleSheet(
-                    "QPushButton { background: transparent; color: #4a627b; font: bold 14px 'Segoe UI'; "
-                    "border: none; border-bottom: 2px solid #4a627b; border-radius: 0; padding-bottom: 4px; }"
-                )
-            else:
-                btn.setStyleSheet(
-                    "QPushButton { background: transparent; color: #718096; font: 14px 'Segoe UI'; "
-                    "border: none; border-radius: 0; padding-bottom: 4px; }"
-                    "QPushButton:hover { color: #1a202c; }"
-                )
-            tb_lay.addWidget(btn)
-        tb_lay.addStretch()
-        s_lay.addWidget(tab_bar)
+        h_lay.addWidget(t)
+        h_lay.addStretch()
+        s_lay.addWidget(hdr)
 
         # Folder cards — real data from LibraryState
         from library_page import LibraryState, _fmt_size
+
         state = LibraryState()
         folders = state.folders()
 
@@ -1127,29 +1479,53 @@ class PDFreeApp(QMainWindow):
                 cnt, sz = state.folder_stats(fd["path"])
                 meta = f"{cnt} file{'s' if cnt != 1 else ''} · {_fmt_size(sz)}"
                 rw.addWidget(
-                    self._make_folder_card(fd["name"], meta, fd.get("color", "#3b82f6"), fd["path"]), 1
+                    self._make_folder_card(
+                        fd["name"], meta, fd.get("color", "#3b82f6"), fd["path"]
+                    ),
+                    1,
                 )
         else:
             empty = QLabel("No folders yet — add one with the + button in the sidebar.")
-            empty.setStyleSheet("color: #718096; font: 13px 'Segoe UI'; background: transparent;")
+            empty.setStyleSheet(
+                f"color: {colors.G500}; font: 13px 'Segoe UI'; background: transparent;"
+            )
             rw.addWidget(empty)
 
         s_lay.addWidget(row_w)
         return section
 
-    def _make_folder_card(self, name: str, meta: str, color: str, path: str = "") -> QFrame:
+    def _make_folder_card(
+        self, name: str, meta: str, color: str, path: str = ""
+    ) -> QFrame:
         card = QFrame()
         card.setObjectName("FolderCard")
         card.setFixedHeight(125)
         card.setMinimumWidth(80)
-        card.setStyleSheet(
-            "QFrame#FolderCard { background: #FFFFFF; border: 1px solid #e2e8f0; border-radius: 8px; }"
-        )
+        style_normal = f"QFrame#FolderCard {{ background: {colors.WHITE}; border: 1px solid {colors.HOME_BORDER}; border-radius: 8px; }}"
+        style_hovered = f"QFrame#FolderCard {{ background: {colors.WHITE}; border: 1px solid {colors.G300}; border-radius: 8px; }}"
+        card.setStyleSheet(style_normal)
         card.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         card.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
+        # Colored top bar — resizes with the card
+        bar = QFrame(card)
+        bar.setFixedHeight(6)
+        bar.setStyleSheet(
+            f"background: {color}; border-radius: 0px; border-top-left-radius: 8px; "
+            "border-top-right-radius: 8px; border: none;"
+        )
+        bar.setGeometry(0, 0, max(card.minimumWidth(), 200), 6)
+        orig_resize = card.resizeEvent
+
+        def _resize(event, b=bar):
+            b.setGeometry(0, 0, event.size().width(), 6)
+            if callable(orig_resize):
+                orig_resize(event)
+
+        card.resizeEvent = _resize
+
         c_lay = QVBoxLayout(card)
-        c_lay.setContentsMargins(16, 16, 16, 12)
+        c_lay.setContentsMargins(16, 18, 16, 12)
         c_lay.setSpacing(0)
 
         top_row = QWidget()
@@ -1157,13 +1533,16 @@ class PDFreeApp(QMainWindow):
         tr_lay = QHBoxLayout(top_row)
         tr_lay.setContentsMargins(0, 0, 0, 0)
         tr_lay.setSpacing(0)
-        fi = QLabel("📁")
+        fi = QLabel()
+        fi.setPixmap(svg_pixmap("folder", color, 22))
         fi.setFixedSize(30, 24)
-        fi.setStyleSheet(f"color: {color}; font: 20px; background: transparent;")
+        fi.setStyleSheet("background: transparent;")
         tr_lay.addWidget(fi)
         tr_lay.addStretch()
         dots = QLabel("···")
-        dots.setStyleSheet("color: #718096; font: bold 12px; background: transparent;")
+        dots.setStyleSheet(
+            f"color: {colors.G400}; font: bold 14px; background: transparent;"
+        )
         tr_lay.addWidget(dots)
         c_lay.addWidget(top_row)
 
@@ -1171,15 +1550,23 @@ class PDFreeApp(QMainWindow):
 
         n_lbl = QLabel(name)
         n_lbl.setWordWrap(False)
-        n_lbl.setStyleSheet("color: #1a202c; font: bold 14px 'Segoe UI'; background: transparent;")
+        n_lbl.setStyleSheet(
+            f"color: {colors.HOME_TEXT}; font: bold 13px 'Segoe UI'; background: transparent;"
+        )
         c_lay.addWidget(n_lbl)
 
         m_lbl = QLabel(meta)
-        m_lbl.setStyleSheet("color: #718096; font: 10px 'Segoe UI'; background: transparent;")
+        m_lbl.setStyleSheet(
+            f"color: {colors.G500}; font: 10px 'Segoe UI'; background: transparent;"
+        )
         c_lay.addWidget(m_lbl)
 
+        card.enterEvent = lambda e, c=card, s=style_hovered: c.setStyleSheet(s)
+        card.leaveEvent = lambda e, c=card, s=style_normal: c.setStyleSheet(s)
         card.mousePressEvent = lambda e, p=path: (
-            self._set_home_nav(f"folder:{p}") if e.button() == Qt.MouseButton.LeftButton and p else None
+            self._set_home_nav(f"folder:{p}")
+            if e.button() == Qt.MouseButton.LeftButton and p
+            else None
         )
         return card
 
@@ -1195,15 +1582,16 @@ class PDFreeApp(QMainWindow):
         h_lay = QHBoxLayout(hdr)
         h_lay.setContentsMargins(0, 0, 0, 0)
         t = QLabel("Recent Files")
-        t.setStyleSheet("color: #1a202c; font: bold 16px 'Segoe UI'; background: transparent;")
+        t.setStyleSheet(
+            f"color: {colors.HOME_TEXT}; font: bold 16px 'Segoe UI'; background: transparent;"
+        )
         h_lay.addWidget(t)
         h_lay.addStretch()
-        
 
         # Table container
         tbl = QFrame()
         tbl.setStyleSheet(
-            "QFrame { background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 0; }"
+            f"QFrame {{ background: {colors.WHITE}; border: 1px solid {colors.G200}; border-radius: 0; }}"
         )
         tbl_lay = QVBoxLayout(tbl)
         tbl_lay.setContentsMargins(0, 0, 0, 0)
@@ -1213,7 +1601,7 @@ class PDFreeApp(QMainWindow):
         th = QWidget()
         th.setFixedHeight(38)
         th.setStyleSheet(
-            "background: #F9FAFB; border-bottom: 1px solid #E5E7EB; border-radius: 0;"
+            f"background: {colors.G50}; border-bottom: 1px solid {colors.G200}; border-radius: 0;"
         )
         th_lay = QHBoxLayout(th)
         th_lay.setContentsMargins(20, 0, 12, 0)
@@ -1224,61 +1612,89 @@ class PDFreeApp(QMainWindow):
 
         # header cells — must mirror row structure exactly
         for lbl, w in [
-            ("NAME",          0),
+            ("NAME", 0),
             ("DATE MODIFIED", 140),
-            ("SIZE",          100),
-            ("",              28),
+            ("SIZE", 100),
+            ("", 28),
         ]:
             cell = QLabel(lbl)
-            cell.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            cell.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
             cell.setStyleSheet(
-                "color: #9CA3AF; font: bold 10px 'Segoe UI'; "
+                f"color: {colors.G400}; font: bold 10px 'Segoe UI'; "
                 "letter-spacing: 1px; background: transparent; border: none; padding: 0; margin: 0;"
             )
             if w:
                 cell.setFixedWidth(w)
             else:
-                cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+                cell.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+                )
             th_lay.addWidget(cell)
 
         # Rows — real data from LibraryState
         from library_page import LibraryState, _fmt_size, _age_str
+
         recent_files = LibraryState().recent(8)
         FILE_COLORS = {"pdf": "#ef4444", "docx": "#3b82f6", "xlsx": "#16a34a"}
 
         if recent_files:
             for i, entry in enumerate(recent_files):
-                name  = entry.get("name", "")
-                ext   = name.rsplit(".", 1)[-1].lower() if "." in name else "pdf"
+                name = entry.get("name", "")
+                ext = name.rsplit(".", 1)[-1].lower() if "." in name else "pdf"
                 color = FILE_COLORS.get(ext, "#9ca3af")
-                age   = _age_str(entry.get("last_opened", "")) or "—"
-                size  = _fmt_size(entry.get("size", 0))
-                row = self._make_file_row(ext, name, age, size, entry["path"],
-                                          first=(i == 0), color=color, entry=entry)
+                age = _age_str(entry.get("last_opened", "")) or "—"
+                size = _fmt_size(entry.get("size", 0))
+                row = self._make_file_row(
+                    ext,
+                    name,
+                    age,
+                    size,
+                    entry["path"],
+                    first=(i == 0),
+                    color=color,
+                    entry=entry,
+                )
                 tbl_lay.addWidget(row)
         else:
             empty = QLabel("No files yet — upload a PDF to get started.")
             empty.setContentsMargins(16, 20, 16, 20)
-            empty.setStyleSheet("color: #718096; font: 13px 'Segoe UI'; background: transparent;")
+            empty.setStyleSheet(
+                f"color: {colors.G500}; font: 13px 'Segoe UI'; background: transparent;"
+            )
             tbl_lay.addWidget(empty)
 
         s_lay.addWidget(tbl)
         return section
 
-    def _make_file_row(self, ftype: str, fname: str, fdate: str, fsize: str,
-                       path: str = "", first: bool = False,
-                       color: str = "#9ca3af", entry: dict | None = None) -> QWidget:
+    def _make_file_row(
+        self,
+        ftype: str,
+        fname: str,
+        fdate: str,
+        fsize: str,
+        path: str = "",
+        first: bool = False,
+        color: str = "#9ca3af",
+        entry: dict | None = None,
+    ) -> QWidget:
         import os as _os
+
         exists = path and _os.path.exists(path)
 
         row = QWidget()
         row.setFixedHeight(48)
-        row.setStyleSheet("QWidget { background: #FFFFFF; border-bottom: 1px solid #F3F4F6; }")
+        row.setStyleSheet(
+            f"QWidget {{ background: {colors.WHITE}; border-bottom: 1px solid {colors.G100}; }}"
+        )
         row.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         row.enterEvent = lambda e, r=row: r.setStyleSheet(
-            "QWidget { background: #FAFAFA; border-bottom: 1px solid #F3F4F6; }")
+            f"QWidget {{ background: {colors.G50}; border-bottom: 1px solid {colors.G100}; }}"
+        )
         row.leaveEvent = lambda e, r=row: r.setStyleSheet(
-            "QWidget { background: #FFFFFF; border-bottom: 1px solid #F3F4F6; }")
+            f"QWidget {{ background: {colors.WHITE}; border-bottom: 1px solid {colors.G100}; }}"
+        )
 
         r_lay = QHBoxLayout(row)
         r_lay.setContentsMargins(20, 0, 12, 0)
@@ -1289,7 +1705,7 @@ class PDFreeApp(QMainWindow):
         badge.setFixedSize(30, 30)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         badge.setStyleSheet(
-            "background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #DC2626,stop:1 #B91C1C);"
+            f"background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {colors.RED_HOVER},stop:1 {colors.RED_DARK});"
             "color: white; font: bold 7px 'Segoe UI'; border-radius: 5px; border: none;"
         )
         r_lay.addWidget(badge)
@@ -1298,21 +1714,29 @@ class PDFreeApp(QMainWindow):
         # File name
         fn_lbl = QLabel(fname)
         fn_lbl.setStyleSheet(
-            f"color: {'#111827' if exists else '#9CA3AF'}; font: 500 13px 'Segoe UI'; background: transparent;"
+            f"color: {colors.G900 if exists else colors.G400}; font: 500 13px 'Segoe UI'; background: transparent;"
         )
         fn_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         r_lay.addWidget(fn_lbl, 1)
 
         date_lbl = QLabel(fdate)
         date_lbl.setFixedWidth(140)
-        date_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        date_lbl.setStyleSheet("color: #6B7280; font: 13px 'Segoe UI'; background: transparent; padding: 0; margin: 0;")
+        date_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        date_lbl.setStyleSheet(
+            f"color: {colors.G500}; font: 13px 'Segoe UI'; background: transparent; padding: 0; margin: 0;"
+        )
         r_lay.addWidget(date_lbl)
 
         size_lbl = QLabel(fsize)
         size_lbl.setFixedWidth(100)
-        size_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        size_lbl.setStyleSheet("color: #374151; font: 13px 'Segoe UI'; background: transparent; padding: 0; margin: 0;")
+        size_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        size_lbl.setStyleSheet(
+            f"color: {colors.G700}; font: 13px 'Segoe UI'; background: transparent; padding: 0; margin: 0;"
+        )
         r_lay.addWidget(size_lbl)
 
         # ── Star ──────────────────────────────────────────────────────
@@ -1321,18 +1745,22 @@ class PDFreeApp(QMainWindow):
         star.setFixedSize(28, 28)
         star.setStyleSheet(
             f"QPushButton {{ background: transparent; border: none; "
-            f"color: {'#F59E0B' if fav else '#D1D5DB'}; font: 15px; border-radius: 6px; }}"
-            "QPushButton:hover { color: #F59E0B; background: #FEF3C7; }"
+            f"color: {colors.AMBER if fav else colors.G300}; font: 15px; border-radius: 6px; }}"
+            f"QPushButton:hover {{ color: {colors.AMBER}; background: {colors.AMBER_BG}; }}"
         )
         if entry:
-            star.clicked.connect(lambda _=False, p=path, v=fav: self._toggle_fav(p, not v))
+            star.clicked.connect(
+                lambda _=False, p=path, v=fav: self._toggle_fav(p, not v)
+            )
         r_lay.addWidget(star)
 
         # Click to open
         if exists:
             row.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             row.mousePressEvent = lambda e, p=path: (
-                self.show_tool("view", p) if e.button() == Qt.MouseButton.LeftButton else None
+                self.show_tool("view", p)
+                if e.button() == Qt.MouseButton.LeftButton
+                else None
             )
 
         return row
@@ -1343,7 +1771,7 @@ class PDFreeApp(QMainWindow):
 
     def _build_library_page(self) -> QWidget:
         page = QWidget()
-        page.setStyleSheet("background: #FFFFFF;")
+        page.setStyleSheet(f"background: {colors.WHITE};")
         p_lay = QVBoxLayout(page)
         p_lay.setContentsMargins(0, 0, 0, 0)
         p_lay.setSpacing(0)
@@ -1352,7 +1780,7 @@ class PDFreeApp(QMainWindow):
         self._lib_scroll.setWidgetResizable(True)
         self._lib_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._lib_scroll.setStyleSheet(
-            "QScrollArea { background: #FFFFFF; border: none; }"
+            f"QScrollArea {{ background: {colors.WHITE}; border: none; }}"
         )
         p_lay.addWidget(self._lib_scroll, 1)
 
@@ -1360,7 +1788,7 @@ class PDFreeApp(QMainWindow):
         self._sel_wrap = QFrame()
         self._sel_wrap.setFixedHeight(52)
         self._sel_wrap.setStyleSheet(
-            "QFrame { background: #FFFFFF; border-top: 1px solid #e2e8f0; }"
+            f"QFrame {{ background: {colors.WHITE}; border-top: 1px solid {colors.HOME_BORDER}; }}"
         )
         self._sel_wrap.hide()
         sw = QHBoxLayout(self._sel_wrap)
@@ -1368,30 +1796,30 @@ class PDFreeApp(QMainWindow):
         sw.setSpacing(12)
         self._sel_count_lbl = QLabel("")
         self._sel_count_lbl.setStyleSheet(
-            "color: #1a202c; font: bold 13px 'Segoe UI'; background: transparent;"
+            f"color: {colors.HOME_TEXT}; font: bold 13px 'Segoe UI'; background: transparent;"
         )
         sw.addWidget(self._sel_count_lbl)
         sw.addStretch()
         for lbl, danger, slot in [
-            ("Open",             False, self._sel_open),
+            ("Open", False, self._sel_open),
             ("Show in Explorer", False, self._sel_explorer),
-            ("Delete",           True,  self._sel_trash),
+            ("Delete", True, self._sel_trash),
         ]:
             b = QPushButton(lbl)
             b.setFixedHeight(34)
             b.setStyleSheet(
-                f"QPushButton {{ background: {'#FEE2E2' if danger else '#f1f5f9'}; "
-                f"color: {'#ef4444' if danger else '#374151'}; border: none; "
+                f"QPushButton {{ background: {colors.RED_DIM if danger else colors.G100}; "
+                f"color: {colors.RED if danger else colors.G700}; border: none; "
                 "border-radius: 6px; font: 12px 'Segoe UI'; padding: 0 14px; }"
-                f"QPushButton:hover {{ background: {'#FECACA' if danger else '#e2e8f0'}; }}"
+                f"QPushButton:hover {{ background: {colors.RED_MED if danger else colors.G200}; }}"
             )
             b.clicked.connect(slot)
             sw.addWidget(b)
         close_b = QPushButton("×")
         close_b.setFixedSize(32, 32)
         close_b.setStyleSheet(
-            "QPushButton { background: #f1f5f9; color: #4B5563; border-radius: 16px; font: bold 16px; border: none; }"
-            "QPushButton:hover { background: #e2e8f0; }"
+            f"QPushButton {{ background: {colors.G100}; color: {colors.G600}; border-radius: 16px; font: bold 16px; border: none; }}"
+            f"QPushButton:hover {{ background: {colors.G200}; }}"
         )
         close_b.clicked.connect(self._sel_clear)
         sw.addWidget(close_b)
@@ -1403,11 +1831,12 @@ class PDFreeApp(QMainWindow):
         if self._lib_scroll is None:
             return
         from library_page import LibraryState
+
         state = LibraryState()
         q = self._lib_search_q
 
         content = QWidget()
-        content.setStyleSheet("background: #FFFFFF;")
+        content.setStyleSheet(f"background: {colors.WHITE};")
         lay = QVBoxLayout(content)
         lay.setContentsMargins(32, 32, 32, 32)
         lay.setSpacing(28)
@@ -1427,7 +1856,9 @@ class PDFreeApp(QMainWindow):
 
     def _lib_hdr(self, text: str) -> QLabel:
         lbl = QLabel(text)
-        lbl.setStyleSheet("color: #1a202c; font: bold 16px 'Segoe UI'; background: transparent;")
+        lbl.setStyleSheet(
+            f"color: {colors.HOME_TEXT}; font: bold 16px 'Segoe UI'; background: transparent;"
+        )
         return lbl
 
     def _lib_empty(self, text: str) -> QWidget:
@@ -1438,12 +1869,15 @@ class PDFreeApp(QMainWindow):
         wl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl = QLabel(text)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet("color: #718096; font: 14px 'Segoe UI'; background: transparent;")
+        lbl.setStyleSheet(
+            f"color: {colors.G500}; font: 14px 'Segoe UI'; background: transparent;"
+        )
         wl.addWidget(lbl)
         return w
 
     def _build_lib_all(self, lay, state, q: str):
         from library_page import HeroBanner, FolderCard, _NewFolderCard
+
         # Hero banner
         recent1 = state.recent(1, q)
         hero = HeroBanner(recent1[0] if recent1 else None)
@@ -1459,8 +1893,8 @@ class PDFreeApp(QMainWindow):
         hr.addStretch()
         add_btn = QPushButton("+ Add Folder")
         add_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #4a627b; border: none; font: bold 12px 'Segoe UI'; }"
-            "QPushButton:hover { color: #1a202c; }"
+            f"QPushButton {{ background: transparent; color: {colors.BRAND}; border: none; font: bold 12px 'Segoe UI'; }}"
+            f"QPushButton:hover {{ color: {colors.HOME_TEXT}; }}"
         )
         add_btn.clicked.connect(self._add_folder)
         hr.addWidget(add_btn)
@@ -1474,7 +1908,9 @@ class PDFreeApp(QMainWindow):
         fr.setAlignment(Qt.AlignmentFlag.AlignLeft)
         for fd in state.folders():
             cnt, sz = state.folder_stats(fd["path"])
-            card = FolderCard(fd["path"], fd["name"], fd.get("color", "#3b82f6"), cnt, sz)
+            card = FolderCard(
+                fd["path"], fd["name"], fd.get("color", "#3b82f6"), cnt, sz
+            )
             card.clicked.connect(lambda p: self._set_home_nav(f"folder:{p}"))
             card.delete_req.connect(self._delete_folder)
             fr.addWidget(card)
@@ -1487,40 +1923,51 @@ class PDFreeApp(QMainWindow):
         # Recent files table
         lay.addWidget(self._lib_hdr("Recent Files"))
         files = state.recent(50, q)
-        lay.addWidget(self._build_lib_file_table(files) if files
-                      else self._lib_empty("No files yet. Upload a PDF to get started."))
+        lay.addWidget(
+            self._build_lib_file_table(files)
+            if files
+            else self._lib_empty("No files yet. Upload a PDF to get started.")
+        )
 
     def _build_lib_recent(self, lay, state, q: str):
         from library_page import HeroBanner
+
         recent1 = state.recent(1, q)
         hero = HeroBanner(recent1[0] if recent1 else None)
         hero.open_req.connect(self._open_file)
         lay.addWidget(hero)
         lay.addWidget(self._lib_hdr("Recent Files"))
         files = state.recent(50, q)
-        lay.addWidget(self._build_lib_file_table(files) if files
-                      else self._lib_empty("No recent files yet."))
+        lay.addWidget(
+            self._build_lib_file_table(files)
+            if files
+            else self._lib_empty("No recent files yet.")
+        )
 
     def _build_lib_favorites(self, lay, state, q: str):
         lay.addWidget(self._lib_hdr("Favorites"))
         files = state.favorites(q)
-        lay.addWidget(self._build_lib_file_table(files) if files
-                      else self._lib_empty("No favorites yet. Star a file to add it here."))
+        lay.addWidget(
+            self._build_lib_file_table(files)
+            if files
+            else self._lib_empty("No favorites yet. Star a file to add it here.")
+        )
 
     def _build_lib_folder(self, lay, state, folder_path: str, q: str):
         name = folder_path.replace("\\", "/").rsplit("/", 1)[-1] or folder_path
         lay.addWidget(self._lib_hdr(name))
         files = state.in_folder(folder_path, q)
-        lay.addWidget(self._build_lib_file_table(files) if files
-                      else self._lib_empty("No PDFs found in this folder."))
+        lay.addWidget(
+            self._build_lib_file_table(files)
+            if files
+            else self._lib_empty("No PDFs found in this folder.")
+        )
 
     def _build_lib_file_table(self, files: list) -> QWidget:
-        from library_page import _fmt_size, _age_str
-        import os as _os
 
         tbl = QFrame()
         tbl.setStyleSheet(
-            "QFrame { background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 0; }"
+            f"QFrame {{ background: {colors.WHITE}; border: 1px solid {colors.G200}; border-radius: 0; }}"
         )
         tbl_lay = QVBoxLayout(tbl)
         tbl_lay.setContentsMargins(0, 0, 0, 0)
@@ -1530,7 +1977,7 @@ class PDFreeApp(QMainWindow):
         th = QWidget()
         th.setFixedHeight(38)
         th.setStyleSheet(
-            "background: #F9FAFB; border-bottom: 1px solid #E5E7EB; border-radius: 0;"
+            f"background: {colors.G50}; border-bottom: 1px solid {colors.G200}; border-radius: 0;"
         )
         th_lay = QHBoxLayout(th)
         th_lay.setContentsMargins(20, 0, 12, 0)
@@ -1539,15 +1986,19 @@ class PDFreeApp(QMainWindow):
         th_lay.addSpacing(15 + 14 + 30 + 10)
         for lbl, w in [("NAME", 0), ("LAST OPENED", 140), ("SIZE", 100)]:
             cell = QLabel(lbl)
-            cell.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            cell.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
             cell.setStyleSheet(
-                "color: #9CA3AF; font: bold 10px 'Segoe UI'; "
+                f"color: {colors.G400}; font: bold 10px 'Segoe UI'; "
                 "letter-spacing: 1px; background: transparent; border: none; padding: 0; margin: 0;"
             )
             if w:
                 cell.setFixedWidth(w)
             else:
-                cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+                cell.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+                )
             th_lay.addWidget(cell)
         tbl_lay.addWidget(th)
 
@@ -1560,21 +2011,29 @@ class PDFreeApp(QMainWindow):
         from library_page import _fmt_size, _age_str
         import os as _os
 
-        is_sel  = entry.get("path", "") in self._selected_files
-        exists  = _os.path.exists(entry.get("path", ""))
-        fav     = entry.get("favorited", False)
-        bg      = "#EFF6FF" if is_sel else "#FFFFFF"
+        is_sel = entry.get("path", "") in self._selected_files
+        exists = _os.path.exists(entry.get("path", ""))
+        fav = entry.get("favorited", False)
+        bg = colors.BLUE_DIM if is_sel else colors.WHITE
 
         row = QWidget()
         row.setFixedHeight(48)
-        row.setStyleSheet(f"QWidget {{ background: {bg}; border-bottom: 1px solid #F3F4F6; }}")
+        row.setStyleSheet(
+            f"QWidget {{ background: {bg}; border-bottom: 1px solid {colors.G100}; }}"
+        )
         row.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
         def _enter(e, r=row, s=is_sel):
             if not s:
-                r.setStyleSheet("QWidget { background: #FAFAFA; border-bottom: 1px solid #F3F4F6; }")
+                r.setStyleSheet(
+                    f"QWidget {{ background: {colors.G50}; border-bottom: 1px solid {colors.G100}; }}"
+                )
+
         def _leave(e, r=row, b=bg):
-            r.setStyleSheet(f"QWidget {{ background: {b}; border-bottom: 1px solid #F3F4F6; }}")
+            r.setStyleSheet(
+                f"QWidget {{ background: {b}; border-bottom: 1px solid {colors.G100}; }}"
+            )
+
         row.enterEvent = _enter
         row.leaveEvent = _leave
 
@@ -1587,17 +2046,19 @@ class PDFreeApp(QMainWindow):
         chk.setFixedSize(15, 15)
         if is_sel:
             chk.setStyleSheet(
-                "background: #2563EB; border: 1.5px solid #2563EB; border-radius: 3px;"
+                f"background: {colors.BLUE_ACCENT}; border: 1.5px solid {colors.BLUE_ACCENT}; border-radius: 3px;"
             )
         else:
             chk.setStyleSheet(
-                "background: #FFFFFF; border: 1.5px solid #D1D5DB; border-radius: 3px;"
+                f"background: {colors.WHITE}; border: 1.5px solid {colors.G300}; border-radius: 3px;"
             )
         chk_wrap = QWidget()
         chk_wrap.setFixedSize(15, 15)
         chk_wrap.setStyleSheet("background: transparent;")
         chk_wrap.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        chk_wrap.mousePressEvent = lambda e, p=entry.get("path", ""): self._toggle_sel(p)
+        chk_wrap.mousePressEvent = lambda e, p=entry.get("path", ""): self._toggle_sel(
+            p
+        )
         cw = QHBoxLayout(chk_wrap)
         cw.setContentsMargins(0, 0, 0, 0)
         cw.addWidget(chk)
@@ -1609,14 +2070,16 @@ class PDFreeApp(QMainWindow):
         badge.setFixedSize(30, 30)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         badge.setStyleSheet(
-            "background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #DC2626,stop:1 #B91C1C);"
+            f"background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {colors.RED_HOVER},stop:1 {colors.RED_DARK});"
             "color: white; font: bold 7px 'Segoe UI'; border-radius: 5px; border: none;"
         )
         r.addWidget(badge)
         r.addSpacing(10)
 
         # ── Name ──────────────────────────────────────────────────────
-        name_color = "#1D4ED8" if is_sel else ("#111827" if exists else "#9CA3AF")
+        name_color = (
+            colors.BLUE_DEEP if is_sel else (colors.G900 if exists else colors.G400)
+        )
         fn = QLabel(entry.get("name", "Unknown"))
         fn.setStyleSheet(
             f"color: {name_color}; font: 500 13px 'Segoe UI'; background: transparent;"
@@ -1628,14 +2091,18 @@ class PDFreeApp(QMainWindow):
         age_lbl = QLabel(_age_str(entry.get("last_opened", "")) or "—")
         age_lbl.setFixedWidth(140)
         age_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        age_lbl.setStyleSheet("color: #6B7280; font: 13px 'Segoe UI'; background: transparent; padding: 0; margin: 0;")
+        age_lbl.setStyleSheet(
+            f"color: {colors.G500}; font: 13px 'Segoe UI'; background: transparent; padding: 0; margin: 0;"
+        )
         r.addWidget(age_lbl)
 
         # ── Size ──────────────────────────────────────────────────────
         sz_lbl = QLabel(_fmt_size(entry.get("size", 0)))
         sz_lbl.setFixedWidth(100)
         sz_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        sz_lbl.setStyleSheet("color: #374151; font: 13px 'Segoe UI'; background: transparent; padding: 0; margin: 0;")
+        sz_lbl.setStyleSheet(
+            f"color: {colors.G700}; font: 13px 'Segoe UI'; background: transparent; padding: 0; margin: 0;"
+        )
         r.addWidget(sz_lbl)
 
         # ── Star ──────────────────────────────────────────────────────
@@ -1643,41 +2110,53 @@ class PDFreeApp(QMainWindow):
         star.setFixedSize(28, 28)
         star.setStyleSheet(
             f"QPushButton {{ background: transparent; border: none; "
-            f"color: {'#F59E0B' if fav else '#D1D5DB'}; font: 15px; border-radius: 6px; }}"
-            "QPushButton:hover { color: #F59E0B; background: #FEF3C7; }"
+            f"color: {colors.AMBER if fav else colors.G300}; font: 15px; border-radius: 6px; }}"
+            f"QPushButton:hover {{ color: {colors.AMBER}; background: {colors.AMBER_BG}; }}"
         )
-        star.clicked.connect(lambda _=False, p=entry.get("path", ""), v=fav: self._toggle_fav(p, not v))
+        star.clicked.connect(
+            lambda _=False, p=entry.get("path", ""), v=fav: self._toggle_fav(p, not v)
+        )
         r.addWidget(star)
 
         # ── Menu "···" ────────────────────────────────────────────────
         menu_btn = QPushButton("···")
         menu_btn.setFixedSize(28, 28)
         menu_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; color: #D1D5DB; "
-            "font: bold 14px 'Segoe UI'; border-radius: 6px; }"
-            "QPushButton:hover { background: #F3F4F6; color: #6B7280; }"
+            f"QPushButton {{ background: transparent; border: none; color: {colors.G300}; "
+            f"font: bold 14px 'Segoe UI'; border-radius: 6px; }}"
+            f"QPushButton:hover {{ background: {colors.G100}; color: {colors.G500}; }}"
         )
+
         def _show_menu(_, p=entry.get("path", ""), e=exists):
             from PySide6.QtWidgets import QMenu as _QMenu
+
             m = _QMenu(row)
             m.setStyleSheet(
-                "QMenu { background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 4px; }"
-                "QMenu::item { padding: 6px 20px; color: #374151; font: 13px 'Segoe UI'; border-radius: 4px; }"
-                "QMenu::item:selected { background: #F3F4F6; }"
+                f"QMenu {{ background: {colors.WHITE}; border: 1px solid {colors.G200}; border-radius: 8px; padding: 4px; }}"
+                f"QMenu::item {{ padding: 6px 20px; color: {colors.G700}; font: 13px 'Segoe UI'; border-radius: 4px; }}"
+                f"QMenu::item:selected {{ background: {colors.G100}; }}"
             )
             if e:
                 m.addAction("Open", lambda: self._open_file(p))
             import sys as _sys
+
             if _sys.platform == "win32":
-                m.addAction("Show in Explorer",
-                            lambda: __import__("subprocess").Popen(["explorer", "/select,", p]))
+                m.addAction(
+                    "Show in Explorer",
+                    lambda: __import__("subprocess").Popen(["explorer", "/select,", p]),
+                )
             elif _sys.platform == "darwin":
-                m.addAction("Reveal in Finder",
-                            lambda: __import__("subprocess").Popen(["open", "-R", p]))
+                m.addAction(
+                    "Reveal in Finder",
+                    lambda: __import__("subprocess").Popen(["open", "-R", p]),
+                )
             fav_now = entry.get("favorited", False)
-            m.addAction("Remove from Favorites" if fav_now else "Add to Favorites",
-                        lambda: self._toggle_fav(p, not fav_now))
+            m.addAction(
+                "Remove from Favorites" if fav_now else "Add to Favorites",
+                lambda: self._toggle_fav(p, not fav_now),
+            )
             m.exec(menu_btn.mapToGlobal(menu_btn.rect().bottomLeft()))
+
         menu_btn.clicked.connect(_show_menu)
         r.addWidget(menu_btn)
 
@@ -1696,23 +2175,29 @@ class PDFreeApp(QMainWindow):
         self.show_tool("view", path)
 
     def _upload_new(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Upload PDF", "", "PDF files (*.pdf)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Upload PDF", "", "PDF files (*.pdf)"
+        )
         if path:
             from library_page import LibraryState
+
             LibraryState().track(path)
             self._set_home_nav("all_files")
 
     def _add_folder(self):
         from PySide6.QtWidgets import QFileDialog as _QFD
+
         folder = _QFD.getExistingDirectory(self, "Add Folder")
         if folder:
             from library_page import LibraryState
+
             LibraryState().add_folder(folder)
             self._rebuild_folder_nav()
             self._refresh_library()
 
     def _delete_folder(self, path: str):
         from library_page import LibraryState
+
         LibraryState().delete_folder(path)
         self._rebuild_folder_nav()
         if self._lib_nav_key == f"folder:{path}":
@@ -1721,11 +2206,13 @@ class PDFreeApp(QMainWindow):
 
     def _toggle_fav(self, path: str, val: bool):
         from library_page import LibraryState
+
         LibraryState().set_favorite(path, val)
         self._refresh_library()
 
     def _trash_file(self, path: str):
         from library_page import LibraryState
+
         LibraryState().trash(path)
         self._selected_files.discard(path)
         self._update_sel_bar()
@@ -1734,7 +2221,8 @@ class PDFreeApp(QMainWindow):
     def _on_lib_search(self):
         self._lib_search_q = (
             self._lib_search_edit.text().strip().lower()
-            if self._lib_search_edit else ""
+            if self._lib_search_edit
+            else ""
         )
         self._lib_search_timer.start(80)
 
@@ -1763,13 +2251,21 @@ class PDFreeApp(QMainWindow):
             self._open_file(p)
 
     def _sel_explorer(self):
-        import subprocess, sys
+        import subprocess
+        import sys
+
         for p in list(self._selected_files)[:1]:
-            if sys.platform == "win32":
-                subprocess.Popen(f'explorer /select,"{p}"')
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", "/select,", p])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", "-R", p])
+            except OSError:
+                pass
 
     def _sel_trash(self):
         from library_page import LibraryState
+
         state = LibraryState()
         for p in list(self._selected_files):
             state.trash(p)
@@ -1794,30 +2290,37 @@ class PDFreeApp(QMainWindow):
             if widget:
                 widget.deleteLater()
         from library_page import LibraryState
+
         clrs = ["#3b82f6", "#a855f7", "#f97316", "#8b5cf6", "#10b981"]
         for i, fd in enumerate(LibraryState().data.get("folders", [])[:8]):
-            fname  = fd.get("name", "Folder")
-            fpath  = fd.get("path", "")
+            fname = fd.get("name", "Folder")
+            fpath = fd.get("path", "")
             fcolor = fd.get("color", clrs[i % len(clrs)])
-            row_w  = QWidget()
+            row_w = QWidget()
             row_w.setStyleSheet("background: transparent;")
             rw_lay = QHBoxLayout(row_w)
             rw_lay.setContentsMargins(12, 4, 12, 4)
             rw_lay.setSpacing(8)
             chev = QLabel(">")
             chev.setFixedWidth(8)
-            chev.setStyleSheet("color: #718096; font: 9px; background: transparent;")
+            chev.setStyleSheet(
+                f"color: {colors.G500}; font: 9px; background: transparent;"
+            )
             rw_lay.addWidget(chev)
             fi = QLabel("📁")
             fi.setFixedWidth(16)
             fi.setStyleSheet(f"color: {fcolor}; font: 11px; background: transparent;")
             rw_lay.addWidget(fi)
             fn = QLabel(fname)
-            fn.setStyleSheet("color: #1a202c; font: 14px 'Segoe UI'; background: transparent;")
+            fn.setStyleSheet(
+                f"color: {colors.HOME_TEXT}; font: 14px 'Segoe UI'; background: transparent;"
+            )
             rw_lay.addWidget(fn, 1)
             row_w.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             row_w.mousePressEvent = lambda e, p=fpath: (
-                self._set_home_nav(f"folder:{p}") if e.button() == Qt.MouseButton.LeftButton else None
+                self._set_home_nav(f"folder:{p}")
+                if e.button() == Qt.MouseButton.LeftButton
+                else None
             )
             self._fol_list_lay.addWidget(row_w)
 
@@ -1826,11 +2329,11 @@ class PDFreeApp(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setStyleSheet(
-            "QScrollArea { background: #FFFFFF; border: none; }"
+            f"QScrollArea {{ background: {colors.WHITE}; border: none; }}"
         )
 
         content = QWidget()
-        content.setStyleSheet("background: #FFFFFF;")
+        content.setStyleSheet(f"background: {colors.WHITE};")
         scroll.setWidget(content)
 
         lay = QVBoxLayout(content)
@@ -1950,7 +2453,7 @@ class PDFreeApp(QMainWindow):
             v.setContentsMargins(0, 0, 0, 0)
             v.setSpacing(0)
 
-            btn = QPushButton(tab_name)
+            btn = QPushButton(tr(tab_name))
             btn.setFixedHeight(32)
             btn.clicked.connect(lambda _checked, t=tab_name: self._on_tab_click(t))
             v.addWidget(btn)
@@ -1969,7 +2472,7 @@ class PDFreeApp(QMainWindow):
         search_frame = QFrame()
         search_frame.setFixedHeight(36)
         search_frame.setStyleSheet(
-            f"QFrame {{ background: #f8fafc; border: 1px solid {G200}; border-radius: 4px; }}"
+            f"QFrame {{ background: {colors.HOME_SEARCH_BG}; border: 1px solid {colors.G200}; border-radius: 4px; }}"
         )
         sf_lay = QHBoxLayout(search_frame)
         sf_lay.setContentsMargins(10, 0, 10, 0)
@@ -1981,7 +2484,7 @@ class PDFreeApp(QMainWindow):
         sf_lay.addWidget(mag)
 
         self._search_entry = QLineEdit()
-        self._search_entry.setPlaceholderText("Search tools...")
+        self._search_entry.setPlaceholderText(tr("Search tools..."))
         self._search_entry.setFixedWidth(200)
         self._search_entry.setStyleSheet(f"""
             QLineEdit {{
@@ -2000,20 +2503,24 @@ class PDFreeApp(QMainWindow):
         self._update_tab_styles()
 
     def _update_tab_styles(self):
-        _active_style = lambda: f"""
+        def _active_style():
+            return f"""
             QPushButton {{
                 background: transparent; color: {BLUE_ACCENT}; border: none;
                 border-radius: 6px; padding: 0 10px; font: 13px 'Segoe UI';
             }}
             QPushButton:hover {{ background: {G100}; }}
         """
-        _inactive_style = lambda: f"""
+
+        def _inactive_style():
+            return f"""
             QPushButton {{
                 background: transparent; color: {G500}; border: none;
                 border-radius: 6px; padding: 0 10px; font: 13px 'Segoe UI';
             }}
             QPushButton:hover {{ background: {G100}; }}
         """
+
         for tab_name, (btn, underline) in self._tab_buttons.items():
             if tab_name == self._active_tab:
                 btn.setStyleSheet(_active_style())
@@ -2033,11 +2540,9 @@ class PDFreeApp(QMainWindow):
     def _build_tool_grid(self, lay: QVBoxLayout):
         self._grid_widget = QWidget()
         self._grid_widget.setStyleSheet("background: transparent;")
-        self._grid_layout = QGridLayout(self._grid_widget)
-        self._grid_layout.setContentsMargins(0, 0, 0, 0)
-        self._grid_layout.setSpacing(12)
-        for i in range(4):
-            self._grid_layout.setColumnStretch(i, 1)
+        self._grid_widget.setLayout(QVBoxLayout())
+        self._grid_widget.layout().setContentsMargins(0, 0, 0, 0)
+        self._grid_widget.layout().setSpacing(0)
 
         for cat in CATEGORIES:
             for tid, tname, ticon in cat["tools"]:
@@ -2050,33 +2555,48 @@ class PDFreeApp(QMainWindow):
         lay.addSpacing(30)
 
     def _render_tool_grid(self):
-        if self._grid_layout is None:
+        if self._grid_widget is None:
             return
 
-        while self._grid_layout.count():
-            item = self._grid_layout.takeAt(0)
+        container_lay = self._grid_widget.layout()
+        while container_lay.count():
+            item = container_lay.takeAt(0)
             if item is not None:
                 w = item.widget()
                 if w:
                     w.deleteLater()
 
-        q          = self._search_entry.text().strip().lower() if self._search_entry else ""
+        q = self._search_entry.text().strip().lower() if self._search_entry else ""
         tab_filter = TAB_CATEGORIES.get(self._active_tab)
+
+        gw = QWidget()
+        gw.setStyleSheet("background: transparent;")
+        gl = QGridLayout(gw)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(12)
+        for i in range(4):
+            gl.setColumnStretch(i, 1)
 
         col = row_idx = 0
         for tid, tname, ticon, color, cat_title in self._all_tool_data:
             if tab_filter is not None and cat_title not in tab_filter:
                 continue
-            if q and q not in tname.lower():
+            if q and q not in tname.lower() and q not in cat_title.lower():
                 continue
-
             card = ToolCard(tid, tname, ticon, color, tid in IMPLEMENTED)
             card.clicked.connect(self.show_tool)
-            self._grid_layout.addWidget(card, row_idx, col)
+            gl.addWidget(card, row_idx, col)
             col += 1
             if col == 4:
                 col = 0
                 row_idx += 1
+
+        # Stretch row absorbs leftover vertical space so cards don't expand.
+        stretch_row = row_idx + (1 if col > 0 else 0)
+        gl.setRowStretch(stretch_row, 1)
+
+        container_lay.addWidget(gw)
+        container_lay.addStretch()
 
     # ---- footer -------------------------------------------------------
     def _build_footer(self, lay: QVBoxLayout):
@@ -2110,7 +2630,7 @@ class PDFreeApp(QMainWindow):
         for cat in CATEGORIES:
             for tid, tname, _ in cat["tools"]:
                 if tid == tool_id:
-                    return tname
+                    return tr(tname)
         return tool_id.replace("_", " ").title()
 
     def _build_tool_view(self, tool_id: str, path: str = "") -> QWidget:
@@ -2125,15 +2645,15 @@ class PDFreeApp(QMainWindow):
         topbar.setFixedHeight(56)
         topbar.setStyleSheet(f"""
             QFrame {{
-                background: #FAFBFC;
-                border-bottom: 1px solid {G200};
+                background: {colors.WHITE};
+                border-bottom: 1px solid {colors.G200};
             }}
         """)
         t_lay = QHBoxLayout(topbar)
         t_lay.setContentsMargins(16, 0, 16, 0)
         t_lay.setSpacing(8)
 
-        back_btn = _make_back_button("Back to Home", self._back_to_home)
+        back_btn = _make_back_button(tr("Back to Home"), self._back_to_home)
         t_lay.addWidget(back_btn)
 
         # Vertical divider
@@ -2167,6 +2687,7 @@ class PDFreeApp(QMainWindow):
 
         if tool_id == "view":
             from view_tool import ViewTool
+
             tool = ViewTool(initial_path=path)
             self._current_tool = tool
             lay.addWidget(tool)
@@ -2174,13 +2695,281 @@ class PDFreeApp(QMainWindow):
 
         if tool_id == "split":
             from split_tool import SplitTool
+
             tool = SplitTool()
             lay.addWidget(tool)
             return
 
         if tool_id == "excerpt":
             from excerpt_tool import ExcerptTool
+
             tool = ExcerptTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "merge":
+            from merge_tool import MergeTool
+
+            tool = MergeTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "remove":
+            from remove_tool import RemoveTool
+
+            tool = RemoveTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "rotate":
+            from rotate_tool import RotateTool
+
+            tool = RotateTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "batch":
+            from batch_tool import BatchTool
+
+            tool = BatchTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "page_labels":
+            from page_labels_tool import PageLabelsTool
+
+            tool = PageLabelsTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "bookmarks":
+            from bookmarks_tool import BookmarksTool
+
+            tool = BookmarksTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "pdfa":
+            from pdfa_tool import PDFATool
+
+            tool = PDFATool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "compress":
+            from compress_tool import CompressTool
+
+            tool = CompressTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "add_password":
+            from add_password_tool import AddPasswordTool
+
+            tool = AddPasswordTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "remove_password":
+            from remove_password_tool import RemovePasswordTool
+
+            tool = RemovePasswordTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "img_to_pdf":
+            from img_to_pdf_tool import ImgToPDFTool
+
+            tool = ImgToPDFTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "pdf_to_img":
+            from pdf_to_img_tool import PDFToImgTool
+
+            tool = PDFToImgTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "add_page_numbers":
+            from add_page_numbers_tool import AddPageNumbersTool
+
+            tool = AddPageNumbersTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "change_metadata":
+            from change_metadata_tool import ChangeMetadataTool
+
+            tool = ChangeMetadataTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "add_watermark":
+            from watermark_tool import WatermarkTool
+
+            tool = WatermarkTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "crop":
+            from crop_tool import CropTool
+
+            tool = CropTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "pdf_to_word":
+            from pdf_to_word_tool import PDFToWordTool
+
+            tool = PDFToWordTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "ocr_pdf":
+            from ocr_tool import OCRTool
+
+            tool = OCRTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "flatten":
+            from flatten_tool import FlattenTool
+
+            tool = FlattenTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "sanitize":
+            from sanitize_tool import SanitizeTool
+
+            tool = SanitizeTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "extract_images":
+            from extract_images_tool import ExtractImagesTool
+
+            tool = ExtractImagesTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "adjust_size":
+            from scale_pages_tool import ScalePagesTool
+
+            tool = ScalePagesTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "headers_footers":
+            from headers_footers_tool import HeadersFootersTool
+
+            tool = HeadersFootersTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "nup":
+            from nup_tool import NUpTool
+
+            tool = NUpTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "pdf_to_excel":
+            from pdf_to_excel_tool import PDFToExcelTool
+
+            tool = PDFToExcelTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "compare":
+            from compare_tool import CompareTool
+
+            tool = CompareTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "reorder":
+            from reorder_tool import ReorderTool
+
+            tool = ReorderTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "manual_redaction":
+            from redact_tool import RedactTool
+
+            tool = RedactTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "remove_annotations":
+            from remove_annotations_tool import RemoveAnnotationsTool
+
+            tool = RemoveAnnotationsTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "add_image":
+            from add_image_tool import AddImageTool
+
+            tool = AddImageTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "html_to_pdf":
+            from html_to_pdf_tool import HTMLToPDFTool
+
+            tool = HTMLToPDFTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "office_to_pdf":
+            from office_to_pdf_tool import OfficeToPDFTool
+
+            tool = OfficeToPDFTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "pdf_to_csv":
+            from pdf_to_csv_tool import PDFtoCSVTool
+
+            tool = PDFtoCSVTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "form_unlock":
+            from form_unlock_tool import FormUnlockTool
+
+            tool = FormUnlockTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "form_export":
+            from form_export_tool import FormExportTool
+
+            tool = FormExportTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "font_info":
+            from font_info_tool import FontInfoTool
+
+            tool = FontInfoTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "validate_signature":
+            from validate_signature_tool import ValidateSignatureTool
+
+            tool = ValidateSignatureTool()
+            lay.addWidget(tool)
+            return
+
+        if tool_id == "svg_to_pdf":
+            from svg_to_pdf_tool import SvgToPdfTool
+
+            tool = SvgToPdfTool()
             lay.addWidget(tool)
             return
 
@@ -2199,32 +2988,103 @@ class PDFreeApp(QMainWindow):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-_SCROLLBAR_CSS = """
-QScrollBar:vertical {
-    background: transparent; width: 6px; margin: 0;
-}
-QScrollBar::handle:vertical {
-    background: #C4CCD8; border-radius: 3px; min-height: 20px;
-}
-QScrollBar::handle:vertical:hover { background: #9CA3AF; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; background: none; }
-QScrollBar::add-page:vertical,  QScrollBar::sub-page:vertical  { background: none; }
+def _scrollbar_css() -> str:
+    from colors import SCROLLBAR_HANDLE, G400
 
-QScrollBar:horizontal {
+    return f"""
+QScrollBar:vertical {{
+    background: transparent; width: 6px; margin: 0;
+}}
+QScrollBar::handle:vertical {{
+    background: {SCROLLBAR_HANDLE}; border-radius: 3px; min-height: 20px;
+}}
+QScrollBar::handle:vertical:hover {{ background: {G400}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; background: none; }}
+QScrollBar::add-page:vertical,  QScrollBar::sub-page:vertical  {{ background: none; }}
+
+QScrollBar:horizontal {{
     background: transparent; height: 6px; margin: 0;
-}
-QScrollBar::handle:horizontal {
-    background: #C4CCD8; border-radius: 3px; min-width: 20px;
-}
-QScrollBar::handle:horizontal:hover { background: #9CA3AF; }
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; background: none; }
-QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+}}
+QScrollBar::handle:horizontal {{
+    background: {SCROLLBAR_HANDLE}; border-radius: 3px; min-width: 20px;
+}}
+QScrollBar::handle:horizontal:hover {{ background: {G400}; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; background: none; }}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
 """
 
+
+def _on_update_available(tag: str, url: str) -> None:
+    from PySide6.QtWidgets import QMessageBox
+    import webbrowser
+
+    msg = QMessageBox()
+    msg.setWindowTitle("Update Available")
+    msg.setText(f"PDFree {tag} is available.")
+    msg.setInformativeText("Download the latest version from GitHub?")
+    msg.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    )
+    msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+    if msg.exec() == QMessageBox.StandardButton.Yes:
+        webbrowser.open(url)
+
+
+def _install_crash_reporter(app: "QApplication") -> None:
+    import traceback
+
+    _original_hook = sys.excepthook
+
+    def _hook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            _original_hook(exc_type, exc_value, exc_tb)
+            return
+        logger.critical(
+            "Uncaught exception",
+            exc_info=(exc_type, exc_value, exc_tb),
+        )
+        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+
+        msg = QMessageBox(app.activeWindow())
+        msg.setWindowTitle("PDFree crashed")
+        msg.setIcon(QMessageBox.Icon.Critical)
+        msg.setText(
+            "PDFree encountered an unexpected error.\n\n"
+            "Click 'Copy details' to copy the error to your clipboard, "
+            "then paste it into a GitHub issue."
+        )
+        msg.setDetailedText(tb_text)
+        copy_btn = msg.addButton("Copy details", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+
+        if msg.clickedButton() is copy_btn:
+            QApplication.clipboard().setText(
+                f"PDFree crash report\n{'=' * 40}\n{tb_text}"
+            )
+
+        _original_hook(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _hook
+
+
 if __name__ == "__main__":
+    from updater import UpdateChecker
+
     app = QApplication(sys.argv)
+    _install_crash_reporter(app)
+    _install_translator(app)
     app.setStyle("Fusion")
-    app.setStyleSheet(_SCROLLBAR_CSS)
+    app.setStyleSheet(_scrollbar_css())
+    app.aboutToQuit.connect(_cleanup_temps)
     window = PDFreeApp()
+    from theme import apply_theme, is_dark
+
+    apply_theme(is_dark())
     window.show()
+
+    _checker = UpdateChecker()
+    _checker.update_available.connect(_on_update_available)
+    QTimer.singleShot(3000, _checker.start)
+
     sys.exit(app.exec())

@@ -1,16 +1,52 @@
 name: Build & Release
 
-# Trigger by pushing a version tag: git tag v1.0.0 && git push origin v1.0.0
 on:
   push:
+    branches: ['**']
     tags:
       - 'v*'
+  pull_request:
 
 jobs:
+  # ──────────────────────────────────────────────
+  # Test — runs on every push and PR
+  # ──────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Security scan (bandit)
+        run: bandit -r . -ll --exclude ./.venv,./tests
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: pip-audit
+
+      - name: Run tests
+        run: pytest --tb=short -q --cov=. --cov-report=term-missing --cov-fail-under=28
+
+
   # ──────────────────────────────────────────────
   # macOS — builds PDFree.dmg
   # ──────────────────────────────────────────────
   build-mac:
+    needs: test
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4.2.2
@@ -42,6 +78,29 @@ jobs:
       - name: Build PDFree.app
         run: pyinstaller PDFree-mac.spec --noconfirm
 
+      - name: Sign and notarize (macOS)
+        if: startsWith(github.ref, 'refs/tags/') && env.APPLE_CERT_P12 != ''
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARIZE_KEY: ${{ secrets.APPLE_NOTARIZE_KEY }}
+        run: |
+          echo "$APPLE_CERT_P12" | base64 --decode -o cert.p12
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          codesign --deep --force --options runtime \
+            --sign "Developer ID Application: $APPLE_TEAM_ID" \
+            dist/PDFree.app
+          xcrun notarytool submit dist/PDFree.app \
+            --key-id "$APPLE_NOTARIZE_KEY" \
+            --issuer "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple dist/PDFree.app
+
       - name: Install create-dmg
         run: brew install create-dmg
 
@@ -69,6 +128,7 @@ jobs:
   # Windows — builds PDFree_Setup.exe
   # ──────────────────────────────────────────────
   build-windows:
+    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4.2.2
@@ -87,6 +147,21 @@ jobs:
       - name: Build PDFree.exe
         run: pyinstaller PDFree.spec --noconfirm
 
+      - name: Sign executable (Windows)
+        if: startsWith(github.ref, 'refs/tags/') && env.WINDOWS_CERT_PFX != ''
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        shell: powershell
+        run: |
+          $certBytes = [Convert]::FromBase64String($env:WINDOWS_CERT_PFX)
+          [IO.File]::WriteAllBytes("cert.pfx", $certBytes)
+          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign `
+            /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+            /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD `
+            dist\PDFree\_internal\PDFree.exe
+          Remove-Item cert.pfx
+
       - name: Build installer with Inno Setup
         run: |
           choco install innosetup --no-progress -y
@@ -99,10 +174,84 @@ jobs:
           path: dist/PDFree_Setup.exe
 
   # ──────────────────────────────────────────────
+  # Linux — builds PDFree.AppImage
+  # ──────────────────────────────────────────────
+  build-linux:
+    needs: test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libxcb-xinerama0 libxcb1 libx11-6 \
+            libxext6 libxrender1 libfontconfig1 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 \
+            patchelf
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build onedir bundle
+        run: pyinstaller PDFree-linux.spec --noconfirm
+
+      - name: Download appimagetool
+        run: |
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+      - name: Assemble AppDir
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp -r dist/PDFree/* AppDir/usr/bin/
+          # Desktop entry
+          cat > AppDir/PDFree.desktop << 'EOF'
+          [Desktop Entry]
+          Name=PDFree
+          Exec=PDFree
+          Icon=PDFree
+          Type=Application
+          Categories=Office;
+          EOF
+          # Icon — convert SVG to PNG if rsvg-convert is available, otherwise use a placeholder
+          if command -v rsvg-convert &>/dev/null; then
+            rsvg-convert -w 256 -h 256 LOGO.svg -o AppDir/usr/share/icons/hicolor/256x256/apps/PDFree.png
+            cp AppDir/usr/share/icons/hicolor/256x256/apps/PDFree.png AppDir/PDFree.png
+          else
+            cp AppDir/usr/share/icons/hicolor/256x256/apps/PDFree.png AppDir/PDFree.png 2>/dev/null || true
+          fi
+          # AppRun entrypoint
+          ln -s usr/bin/PDFree AppDir/AppRun
+
+      - name: Build AppImage
+        run: |
+          ARCH=x86_64 ./appimagetool AppDir dist/PDFree-x86_64.AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: PDFree-linux
+          path: dist/PDFree-x86_64.AppImage
+
+  # ──────────────────────────────────────────────
   # Publish — creates the GitHub Release
   # ──────────────────────────────────────────────
   release:
-    needs: [build-mac, build-windows]
+    needs: [build-mac, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -119,6 +268,12 @@ jobs:
           name: PDFree-windows
           path: artifacts
 
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4.2.1
+        with:
+          name: PDFree-linux
+          path: artifacts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2.3.2
         with:
@@ -132,9 +287,12 @@ jobs:
             |----------|------|
             | macOS (drag to Applications) | `PDFree.dmg` |
             | Windows (installer) | `PDFree_Setup.exe` |
+            | Linux (AppImage) | `PDFree-x86_64.AppImage` |
 
             **macOS note:** If Gatekeeper blocks the app, right-click → Open → Open.
             **Windows note:** If SmartScreen warns you, click More info → Run anyway.
+            **Linux note:** `chmod +x PDFree-x86_64.AppImage && ./PDFree-x86_64.AppImage`
           files: |
             artifacts/PDFree.dmg
             artifacts/PDFree_Setup.exe
+            artifacts/PDFree-x86_64.AppImage

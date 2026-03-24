@@ -3,57 +3,89 @@
 Load multiple PDFs, drag to select rectangular regions on any page,
 and collect them into a growing excerpt document. Save at any time.
 Uses native PDF crop (show_pdf_page with clip) to preserve text and links.
-
-PySide6 port – no tkinter/customtkinter dependencies.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 from typing import Any, cast
 
 from PySide6.QtWidgets import (
-    QWidget, QFrame, QLabel, QPushButton, QLineEdit,
-    QScrollArea, QHBoxLayout, QVBoxLayout, QFileDialog, QMessageBox,
-    QSizePolicy, QApplication,
+    QWidget,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QLineEdit,
+    QScrollArea,
+    QHBoxLayout,
+    QVBoxLayout,
+    QFileDialog,
+    QMessageBox,
+    QSizePolicy,
 )
-from PySide6.QtCore import Qt, QTimer, QEvent, QObject, QRect, QPoint, QSize
+from PySide6.QtCore import Qt, QTimer, QRect, QSize
 from PySide6.QtGui import (
-    QPainter, QColor, QPixmap, QPen, QPainterPath,
-    QFont, QCursor, QBrush, QIcon,
+    QPainter,
+    QColor,
+    QPixmap,
+    QPen,
+    QFont,
+    QCursor,
+    QBrush,
+    QIcon,
 )
-from icons import svg_pixmap, svg_icon
+from icons import svg_pixmap
 from colors import (
-    BG, WHITE, G100, G200, G300, G400, G500, G700, G800, G900,
-    BLUE, BLUE_DIM, BLUE_DARK, BLUE_HOVER, BLUE_MED,
-    GREEN, GREEN_HOVER, GREEN_TXT, RED, SEL_BLUE,
-    SIDEBAR_BG, CARD_BG,
+    BG,
+    WHITE,
+    G100,
+    G200,
+    G400,
+    G500,
+    G700,
+    G800,
+    G900,
+    BLUE,
+    BLUE_DIM,
+    BLUE_DARK,
+    GREEN,
+    GREEN_HOVER,
+    GREEN_TXT,
+    RED,
+    SEL_BLUE,
+    SIDEBAR_BG,
+    BLUE_MED,
 )
-from utils import _fitz_pix_to_qpixmap, _WheelToHScroll
+from utils import _fitz_pix_to_qpixmap, _WheelToHScroll, assert_file_writable
 
 try:
     import fitz  # pymupdf
 except ImportError:
     fitz = None
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Snippet data structure
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Snippet:
-    source_path: str          # absolute path to source PDF
-    page_index:  int          # 0-based page index within that PDF
-    crop_rect:   Any          # fitz.Rect in PDF coordinate space
-    label:       str  = ""
-    thumbnail:   QPixmap | None = field(default=None, repr=False)  # QPixmap ref
+    source_path: str  # absolute path to source PDF
+    page_index: int  # 0-based page index within that PDF
+    crop_rect: Any  # fitz.Rect in PDF coordinate space
+    label: str = ""
+    thumbnail: QPixmap | None = field(default=None, repr=False)  # QPixmap ref
 
 
 # ---------------------------------------------------------------------------
 # ExcerptCanvas – custom page preview widget with rubber-band selection
 # ---------------------------------------------------------------------------
+
 
 class ExcerptCanvas(QWidget):
     """Renders a single PDF page pixmap with drop-shadow; supports
@@ -82,8 +114,11 @@ class ExcerptCanvas(QWidget):
             p.setPen(QColor(G400))
             f = QFont("Segoe UI", 14)
             p.setFont(f)
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Add a PDF, then drag to select a region")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Add a PDF, then drag to select a region",
+            )
             return
 
         ox = int(et._page_ox)
@@ -130,8 +165,12 @@ class ExcerptCanvas(QWidget):
             p.setPen(handle_pen)
             p.setBrush(QBrush(QColor(WHITE)))
             x0, y0, x1, y1 = rx, ry, rx + rw, ry + rh
-            for hx, hy in [(x0 - 6, y0 - 6), (x1 - 6, y0 - 6),
-                           (x0 - 6, y1 - 6), (x1 - 6, y1 - 6)]:
+            for hx, hy in [
+                (x0 - 6, y0 - 6),
+                (x1 - 6, y0 - 6),
+                (x0 - 6, y1 - 6),
+                (x1 - 6, y1 - 6),
+            ]:
                 p.drawEllipse(hx, hy, 12, 12)
             p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
@@ -224,10 +263,11 @@ class ExcerptCanvas(QWidget):
 # ExcerptTool – main widget
 # ===========================================================================
 
+
 class ExcerptTool(QWidget):
-    THUMB_W = 80    # page thumbnail width in bottom strip
-    SNIP_W  = 60    # snippet thumbnail width in left panel list
-    LEFT_W  = 320   # fixed left panel width in pixels
+    THUMB_W = 80  # page thumbnail width in bottom strip
+    SNIP_W = 60  # snippet thumbnail width in left panel list
+    LEFT_W = 320  # fixed left panel width in pixels
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -242,30 +282,30 @@ class ExcerptTool(QWidget):
 
         # ---- Multi-document state ----
         # Each entry: {"path": str, "doc": fitz.Document, "name": str}
-        self._pdf_list: list  = []
+        self._pdf_list: list = []
         self._active_idx: int = -1
 
         # ---- Per-active-doc view state ----
-        self._current_page: int   = 0
-        self._page_ox: float      = 0.0
-        self._page_oy: float      = 0.0
-        self._page_iw: float      = 0.0
-        self._page_ih: float      = 0.0
-        self._render_mat          = fitz.Matrix(1, 1)
-        self._inv_mat             = fitz.Matrix(1, 1)
+        self._current_page: int = 0
+        self._page_ox: float = 0.0
+        self._page_oy: float = 0.0
+        self._page_iw: float = 0.0
+        self._page_ih: float = 0.0
+        self._render_mat = fitz.Matrix(1, 1)
+        self._inv_mat = fitz.Matrix(1, 1)
         self._preview_pixmap: QPixmap | None = None
         self._zoom_factor: float = 1.0
         self._zoom_lbl = None
 
         # Thumb strip state
-        self._thumb_pixmaps: list  = []   # list of QPixmap | None
-        self._thumb_frames: list   = []   # list of QFrame widgets
+        self._thumb_pixmaps: list = []  # list of QPixmap | None
+        self._thumb_frames: list = []  # list of QFrame widgets
         self._thumb_render_next: int = 0
         self._highlighted_thumb: int = -1
         self._thumb_timer: QTimer | None = None
 
         # ---- Rubber-band state ----
-        self._rb_start: tuple | None   = None
+        self._rb_start: tuple | None = None
         self._rb_current: tuple | None = None
 
         # Flash feedback state
@@ -273,14 +313,14 @@ class ExcerptTool(QWidget):
 
         # ---- Snippets & output doc ----
         self._snippets: list = []
-        self._out_doc        = fitz.open()   # empty in-memory PDF
-        self._out_y_cursor   = 0.0           # current y position on active A4 page
-        self._out_has_page   = False         # whether an A4 page exists yet
+        self._out_doc = fitz.open()  # empty in-memory PDF
+        self._out_y_cursor = 0.0  # current y position on active A4 page
+        self._out_has_page = False  # whether an A4 page exists yet
 
         # Widget refs set during _build_ui; initialised here so methods that
         # reference them don't need hasattr() guards.
         self._active_file_lbl: QLabel | None = None
-        self._page_nav_lbl: QLabel | None    = None
+        self._page_nav_lbl: QLabel | None = None
 
         self._build_ui()
 
@@ -305,8 +345,7 @@ class ExcerptTool(QWidget):
         left_frame.setStyleSheet(
             f"QFrame {{ background: {SIDEBAR_BG}; border-right: 1px solid {G200}; }}"
         )
-        left_frame.setSizePolicy(QSizePolicy.Policy.Fixed,
-                                  QSizePolicy.Policy.Expanding)
+        left_frame.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self._left_frame = left_frame
         self._build_left_panel(left_frame)
         top_lay.addWidget(left_frame)
@@ -314,9 +353,12 @@ class ExcerptTool(QWidget):
         # Right panel (expandable)
         right_frame = QFrame()
         right_frame.setObjectName("RightFrame")
-        right_frame.setStyleSheet(f"QFrame#RightFrame {{ background: {BG}; border: none; }}")
-        right_frame.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                   QSizePolicy.Policy.Expanding)
+        right_frame.setStyleSheet(
+            f"QFrame#RightFrame {{ background: {BG}; border: none; }}"
+        )
+        right_frame.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self._right_frame = right_frame
         self._build_right_panel(right_frame)
         top_lay.addWidget(right_frame, 1)
@@ -373,7 +415,8 @@ class ExcerptTool(QWidget):
             f"background: transparent; border: none;"
         )
         self._active_file_lbl.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         file_card_lay.addWidget(self._active_file_lbl, 1)
 
         # Browse button
@@ -451,10 +494,9 @@ class ExcerptTool(QWidget):
         pdf_scroll = QScrollArea()
         pdf_scroll.setFixedHeight(100)
         pdf_scroll.setWidgetResizable(True)
-        pdf_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        pdf_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         pdf_scroll.setStyleSheet(
-            f"QScrollArea {{ border: none; background: transparent; }}"
+            "QScrollArea { border: none; background: transparent; }"
         )
 
         pdf_inner = QWidget()
@@ -495,10 +537,9 @@ class ExcerptTool(QWidget):
         # Snippet list scroll area
         snip_scroll = QScrollArea()
         snip_scroll.setWidgetResizable(True)
-        snip_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        snip_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         snip_scroll.setStyleSheet(
-            f"QScrollArea {{ border: none; background: transparent; }}"
+            "QScrollArea { border: none; background: transparent; }"
         )
 
         snip_inner = QWidget()
@@ -549,11 +590,13 @@ class ExcerptTool(QWidget):
         self._canvas_scroll = QScrollArea()
         self._canvas_scroll.setWidgetResizable(False)
         self._canvas_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self._canvas_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self._canvas_scroll.setStyleSheet(
-            f"QScrollArea {{ border: none; background: transparent; }}"
+            "QScrollArea { border: none; background: transparent; }"
         )
 
         self._canvas = ExcerptCanvas(self)
@@ -633,7 +676,6 @@ class ExcerptTool(QWidget):
         nav_lay.addStretch()
         lay.addWidget(nav)
 
-
     # --------------------------------------------------------------------------
     # Bottom thumbnail strip
     # --------------------------------------------------------------------------
@@ -691,12 +733,12 @@ class ExcerptTool(QWidget):
         self._thumb_sa = QScrollArea()
         self._thumb_sa.setFixedHeight(160)
         self._thumb_sa.setWidgetResizable(True)
-        self._thumb_sa.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._thumb_sa.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._thumb_sa.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self._thumb_sa.setStyleSheet(
-            f"QScrollArea {{ border: none; background: transparent; }}"
+            "QScrollArea { border: none; background: transparent; }"
         )
         self._wheel_filter = _WheelToHScroll(self._thumb_sa)
 
@@ -726,10 +768,14 @@ class ExcerptTool(QWidget):
 
         self.btn_tl.clicked.connect(
             lambda: self._thumb_sa.horizontalScrollBar().setValue(
-                self._thumb_sa.horizontalScrollBar().value() - 3 * self.THUMB_W))
+                self._thumb_sa.horizontalScrollBar().value() - 3 * self.THUMB_W
+            )
+        )
         self.btn_tr.clicked.connect(
             lambda: self._thumb_sa.horizontalScrollBar().setValue(
-                self._thumb_sa.horizontalScrollBar().value() + 3 * self.THUMB_W))
+                self._thumb_sa.horizontalScrollBar().value() + 3 * self.THUMB_W
+            )
+        )
 
         root_lay.addWidget(strip_container)
 
@@ -739,11 +785,11 @@ class ExcerptTool(QWidget):
 
     def _add_pdf(self):
         if fitz is None:
-            QMessageBox.critical(
-                self, "Error", "PyMuPDF (fitz) is not installed.")
+            QMessageBox.critical(self, "Error", "PyMuPDF (fitz) is not installed.")
             return
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Add PDF(s)", "", "PDF Files (*.pdf)")
+            self, "Add PDF(s)", "", "PDF Files (*.pdf)"
+        )
         if not paths:
             return
         added = 0
@@ -752,16 +798,19 @@ class ExcerptTool(QWidget):
                 continue
             try:
                 doc = fitz.open(p)
-                self._pdf_list.append({
-                    "path": p,
-                    "doc":  doc,
-                    "name": Path(p).name,
-                })
+                self._pdf_list.append(
+                    {
+                        "path": p,
+                        "doc": doc,
+                        "name": Path(p).name,
+                    }
+                )
                 added += 1
             except Exception as e:
+                logger.exception("could not open pdf")
                 QMessageBox.critical(
-                    self, "Error",
-                    f"Could not open {Path(p).name}:\n{e}")
+                    self, "Error", f"Could not open {Path(p).name}:\n{e}"
+                )
         if added:
             if self._active_idx == -1:
                 self._set_active_pdf(0)
@@ -774,7 +823,7 @@ class ExcerptTool(QWidget):
         entry = self._pdf_list.pop(self._active_idx)
         try:
             entry["doc"].close()
-        except Exception:
+        except RuntimeError:
             pass
         self._active_idx = -1
         if self._pdf_list:
@@ -797,7 +846,7 @@ class ExcerptTool(QWidget):
         for entry in self._pdf_list:
             try:
                 entry["doc"].close()
-            except Exception:
+            except RuntimeError:
                 pass
         self._pdf_list.clear()
         self._active_idx = -1
@@ -834,13 +883,14 @@ class ExcerptTool(QWidget):
                 w.deleteLater()
 
         for i, entry in enumerate(self._pdf_list):
-            is_active = (i == self._active_idx)
+            is_active = i == self._active_idx
             card = QFrame()
             card.setFixedHeight(32)
             card.setStyleSheet(
                 f"QFrame {{ background: {BLUE_DIM if is_active else WHITE}; "
-                f"border: 1px solid {'#BFDBFE' if is_active else G200}; "
-                f"border-radius: 8px; }}")
+                f"border: 1px solid {BLUE_MED if is_active else G200}; "
+                f"border-radius: 8px; }}"
+            )
             card.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
             card_lay = QHBoxLayout(card)
@@ -853,8 +903,9 @@ class ExcerptTool(QWidget):
                 f"font: {'bold ' if is_active else ''}12px 'Segoe UI'; "
                 f"border: none; background: transparent;"
             )
-            name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                    QSizePolicy.Policy.Preferred)
+            name_lbl.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+            )
             card_lay.addWidget(name_lbl, 1)
 
             pg_lbl = QLabel(f"{len(entry['doc'])}p")
@@ -874,9 +925,9 @@ class ExcerptTool(QWidget):
         # Update active file card label
         if self._active_file_lbl is not None:
             if self._active_idx >= 0 and self._pdf_list:
-                name = self._pdf_list[self._active_idx]['name']
+                name = self._pdf_list[self._active_idx]["name"]
                 if len(name) > 28:
-                    name = name[:25] + '...'
+                    name = name[:25] + "..."
                 self._active_file_lbl.setText(name)
             else:
                 self._active_file_lbl.setText("No file loaded")
@@ -914,13 +965,13 @@ class ExcerptTool(QWidget):
         cw = max(self._canvas_scroll.viewport().width(), 300)
         ch = max(self._canvas_scroll.viewport().height(), 300)
 
-        page  = doc[self._current_page]
-        pw    = page.rect.width
+        page = doc[self._current_page]
+        pw = page.rect.width
         scale = max((cw - 40) / pw, 0.05) * self._zoom_factor
 
-        mat              = fitz.Matrix(scale, scale)
+        mat = fitz.Matrix(scale, scale)
         self._render_mat = mat
-        self._inv_mat    = ~mat
+        self._inv_mat = ~mat
 
         pix = page.get_pixmap(matrix=mat, alpha=False)
         self._preview_pixmap = _fitz_pix_to_qpixmap(pix)
@@ -940,11 +991,15 @@ class ExcerptTool(QWidget):
     def _toggle_sidebar(self):
         if self._left_frame.isVisible():
             self._left_frame.hide()
-            self._sidebar_toggle_btn.setIcon(QIcon(svg_pixmap("chevron-right", G700, 16)))
+            self._sidebar_toggle_btn.setIcon(
+                QIcon(svg_pixmap("chevron-right", G700, 16))
+            )
             self._sidebar_toggle_btn.setToolTip("Show sidebar")
         else:
             self._left_frame.show()
-            self._sidebar_toggle_btn.setIcon(QIcon(svg_pixmap("chevron-left", G700, 16)))
+            self._sidebar_toggle_btn.setIcon(
+                QIcon(svg_pixmap("chevron-left", G700, 16))
+            )
             self._sidebar_toggle_btn.setToolTip("Hide sidebar")
 
     def _zoom_in(self):
@@ -1023,7 +1078,6 @@ class ExcerptTool(QWidget):
             return
 
         ph_w = self.THUMB_W
-        ph_h = int(self.THUMB_W * 1.4)
         total = len(doc)
 
         for i in range(total):
@@ -1047,9 +1101,7 @@ class ExcerptTool(QWidget):
             img_lbl = QLabel()
             img_lbl.setFixedSize(ph_w, 64)
             img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            img_lbl.setStyleSheet(
-                f"background: {G200}; border: none;"
-            )
+            img_lbl.setStyleSheet(f"background: {G200}; border: none;")
             img_lbl.mousePressEvent = lambda e, ii=i: self._show_page(ii)
             frame_lay.addWidget(img_lbl)
 
@@ -1085,26 +1137,27 @@ class ExcerptTool(QWidget):
         if doc is None:
             return
         start = self._thumb_render_next
-        end   = min(start + batch, len(doc))
+        end = min(start + batch, len(doc))
 
         for i in range(start, end):
             if self._thumb_pixmaps[i] is not None:
                 continue
             try:
-                page  = doc[i]
+                page = doc[i]
                 scale = self.THUMB_W / page.rect.width
-                pix   = page.get_pixmap(
-                    matrix=fitz.Matrix(scale, scale), alpha=False)
-                qpix  = _fitz_pix_to_qpixmap(pix)
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+                qpix = _fitz_pix_to_qpixmap(pix)
                 self._thumb_pixmaps[i] = qpix
-            except Exception:
+            except RuntimeError:
                 continue
 
             if i < len(self._thumb_frames):
                 frame = self._thumb_frames[i]
                 frame_any = cast(Any, frame)
                 frame_any._img_lbl.setPixmap(qpix)
-                frame_any._img_lbl.setStyleSheet("background: transparent; border: none;")
+                frame_any._img_lbl.setStyleSheet(
+                    "background: transparent; border: none;"
+                )
                 # Re-apply highlight if needed
                 if i == self._highlighted_thumb:
                     frame.setStyleSheet(
@@ -1130,8 +1183,9 @@ class ExcerptTool(QWidget):
                 f"border-radius: 4px; padding: 4px; }}"
             )
             from typing import cast as _cast
+
             old_any = _cast(Any, old_frame)
-            if hasattr(old_any, '_num_lbl'):
+            if hasattr(old_any, "_num_lbl"):
                 old_any._num_lbl.setStyleSheet(
                     f"color: {G500}; font: 9px 'Segoe UI'; "
                     f"background: transparent; border: none;"
@@ -1144,7 +1198,7 @@ class ExcerptTool(QWidget):
                 f"border-radius: 4px; padding: 4px; }}"
             )
             new_any = cast(Any, new_frame)
-            if hasattr(new_any, '_num_lbl'):
+            if hasattr(new_any, "_num_lbl"):
                 new_any._num_lbl.setStyleSheet(
                     f"color: {BLUE_DARK}; font: bold 9px 'Segoe UI'; "
                     f"background: transparent; border: none;"
@@ -1157,16 +1211,16 @@ class ExcerptTool(QWidget):
     # ==========================================================================
 
     def _point_on_page(self, cx: float, cy: float) -> bool:
-        return (self._page_ox <= cx <= self._page_ox + self._page_iw and
-                self._page_oy <= cy <= self._page_oy + self._page_ih)
+        return (
+            self._page_ox <= cx <= self._page_ox + self._page_iw
+            and self._page_oy <= cy <= self._page_oy + self._page_ih
+        )
 
     def _canvas_to_pdf_rect(self, x0, y0, x1, y1):
         """Convert clamped canvas pixel coords to a normalised fitz.Rect
         in PDF page coordinate space."""
-        p0 = fitz.Point(x0 - self._page_ox,
-                         y0 - self._page_oy) * self._inv_mat
-        p1 = fitz.Point(x1 - self._page_ox,
-                         y1 - self._page_oy) * self._inv_mat
+        p0 = fitz.Point(x0 - self._page_ox, y0 - self._page_oy) * self._inv_mat
+        p1 = fitz.Point(x1 - self._page_ox, y1 - self._page_oy) * self._inv_mat
         r = fitz.Rect(p0, p1)
         r.normalize()
         return r
@@ -1191,15 +1245,18 @@ class ExcerptTool(QWidget):
     def _make_snippet_thumbnail(self, snip: Snippet) -> QPixmap | None:
         """Render just the crop region as a small QPixmap."""
         try:
-            src_doc  = fitz.open(snip.source_path)
-            clip     = snip.crop_rect
-            scale    = self.SNIP_W / max(clip.width, 1)
-            mat      = fitz.Matrix(scale, scale)
-            pix      = src_doc[snip.page_index].get_pixmap(
-                matrix=mat, clip=clip, alpha=False)
-            src_doc.close()
+            src_doc = fitz.open(snip.source_path)
+            try:
+                clip = snip.crop_rect
+                scale = self.SNIP_W / max(clip.width, 1)
+                mat = fitz.Matrix(scale, scale)
+                pix = src_doc[snip.page_index].get_pixmap(
+                    matrix=mat, clip=clip, alpha=False
+                )
+            finally:
+                src_doc.close()
             return _fitz_pix_to_qpixmap(pix)
-        except Exception:
+        except (FileNotFoundError, RuntimeError):
             return None
 
     _A4_W = 595.0
@@ -1213,48 +1270,53 @@ class ExcerptTool(QWidget):
         """Pack snippet onto A4 pages vertically, preserving original x-position.
         Starts a new A4 page when the snippet does not fit in the remaining space."""
         try:
-            src_doc  = fitz.open(snip.source_path)
-            clip     = snip.crop_rect
+            src_doc = fitz.open(snip.source_path)
+            try:
+                clip = snip.crop_rect
+                snip_w = clip.width
+                snip_h = clip.height
 
-            snip_w = clip.width
-            snip_h = clip.height
+                # Scale down if wider than A4
+                if snip_w > self._A4_W:
+                    scale = self._A4_W / snip_w
+                    snip_w = self._A4_W
+                    snip_h = snip_h * scale
+                    dest_x = 0.0
+                else:
+                    dest_x = clip.x0
+                    # Keep within A4 bounds
+                    if dest_x + snip_w > self._A4_W:
+                        dest_x = self._A4_W - snip_w
 
-            # Scale down if wider than A4
-            if snip_w > self._A4_W:
-                scale  = self._A4_W / snip_w
-                snip_w = self._A4_W
-                snip_h = snip_h * scale
-                dest_x = 0.0
-            else:
-                dest_x = clip.x0
-                # Keep within A4 bounds
-                if dest_x + snip_w > self._A4_W:
-                    dest_x = self._A4_W - snip_w
+                # New A4 page if none exists or snippet won't fit on current page
+                if not self._out_has_page or (self._out_y_cursor + snip_h > self._A4_H):
+                    self._out_doc.new_page(width=self._A4_W, height=self._A4_H)
+                    self._out_y_cursor = 0.0
+                    self._out_has_page = True
 
-            # New A4 page if none exists or snippet won't fit on current page
-            if not self._out_has_page or (self._out_y_cursor + snip_h > self._A4_H):
-                self._out_doc.new_page(width=self._A4_W, height=self._A4_H)
-                self._out_y_cursor = 0.0
-                self._out_has_page = True
-
-            page      = self._out_doc[-1]
-            dest_rect = fitz.Rect(
-                dest_x,
-                self._out_y_cursor,
-                dest_x + snip_w,
-                self._out_y_cursor + snip_h,
+                page = self._out_doc[-1]
+                dest_rect = fitz.Rect(
+                    dest_x,
+                    self._out_y_cursor,
+                    dest_x + snip_w,
+                    self._out_y_cursor + snip_h,
+                )
+                page.show_pdf_page(dest_rect, src_doc, snip.page_index, clip=clip)
+                self._out_y_cursor += snip_h
+            finally:
+                src_doc.close()
+        except (FileNotFoundError, RuntimeError) as e:
+            logger.exception("capture failed")
+            QMessageBox.critical(
+                self, "Capture Error", f"Failed to capture region:\n{e}"
             )
-            page.show_pdf_page(dest_rect, src_doc, snip.page_index, clip=clip)
-            self._out_y_cursor += snip_h
-            src_doc.close()
-        except Exception as e:
-            QMessageBox.critical(self, "Capture Error",
-                                  f"Failed to capture region:\n{e}")
 
     def _do_capture(self, crop_rect):
         doc_entry = self._pdf_list[self._active_idx]
-        label = (f"{doc_entry['name']}  p.{self._current_page + 1}  "
-                 f"({crop_rect.width:.0f}\u00d7{crop_rect.height:.0f} pt)")
+        label = (
+            f"{doc_entry['name']}  p.{self._current_page + 1}  "
+            f"({crop_rect.width:.0f}\u00d7{crop_rect.height:.0f} pt)"
+        )
         snip = Snippet(
             source_path=doc_entry["path"],
             page_index=self._current_page,
@@ -1265,8 +1327,7 @@ class ExcerptTool(QWidget):
         self._append_to_output(snip)
         self._snippets.append(snip)
         self._rebuild_snippet_list()
-        self._status_lbl.setText(
-            f"{len(self._snippets)} snippet(s) captured")
+        self._status_lbl.setText(f"{len(self._snippets)} snippet(s) captured")
 
     # ==========================================================================
     # SNIPPET LIST UI
@@ -1312,9 +1373,10 @@ class ExcerptTool(QWidget):
         if snip.thumbnail and not snip.thumbnail.isNull():
             thumb_lbl = QLabel()
             scaled = snip.thumbnail.scaled(
-                60, 60,
+                60,
+                60,
                 Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
+                Qt.TransformationMode.SmoothTransformation,
             )
             thumb_lbl.setPixmap(scaled)
             thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1399,14 +1461,15 @@ class ExcerptTool(QWidget):
             self._snippets.pop(idx)
             self._rebuild_output_doc()
             self._rebuild_snippet_list()
-            self._status_lbl.setText(
-                f"{len(self._snippets)} snippet(s) captured")
+            self._status_lbl.setText(f"{len(self._snippets)} snippet(s) captured")
 
     def _move_snippet(self, idx: int, direction: int):
         new_idx = idx + direction
         if 0 <= new_idx < len(self._snippets):
             self._snippets[idx], self._snippets[new_idx] = (
-                self._snippets[new_idx], self._snippets[idx])
+                self._snippets[new_idx],
+                self._snippets[idx],
+            )
             self._rebuild_output_doc()
             self._rebuild_snippet_list()
 
@@ -1418,7 +1481,7 @@ class ExcerptTool(QWidget):
         """Reconstruct _out_doc from _snippets in current order."""
         try:
             self._out_doc.close()
-        except Exception:
+        except RuntimeError:
             pass
         self._out_doc = fitz.open()
         self._reset_out_cursor()
@@ -1430,18 +1493,24 @@ class ExcerptTool(QWidget):
             QMessageBox.warning(self, "Empty", "No snippets captured yet.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Excerpt PDF", "excerpt.pdf",
-            "PDF Files (*.pdf)")
+            self, "Save Excerpt PDF", "excerpt.pdf", "PDF Files (*.pdf)"
+        )
         if not path:
             return
         try:
+            assert_file_writable(Path(path))
             self._out_doc.save(path)
             QMessageBox.information(
-                self, "Saved",
-                f"Excerpt PDF saved:\n{path}\n"
-                f"({self._out_doc.page_count} pages)")
+                self,
+                "Saved",
+                f"Excerpt PDF saved:\n{path}\n({self._out_doc.page_count} pages)",
+            )
             self._status_lbl.setText("Saved.")
-        except Exception as e:
+        except PermissionError as e:
+            logger.exception("save failed")
+            QMessageBox.critical(self, "Error", f"Could not save:\n{e}")
+        except (OSError, RuntimeError) as e:
+            logger.exception("save failed")
             QMessageBox.critical(self, "Error", f"Could not save:\n{e}")
 
     # ==========================================================================
@@ -1453,9 +1522,9 @@ class ExcerptTool(QWidget):
         for entry in self._pdf_list:
             try:
                 entry["doc"].close()
-            except Exception:
+            except RuntimeError:
                 pass
         try:
             self._out_doc.close()
-        except Exception:
+        except RuntimeError:
             pass

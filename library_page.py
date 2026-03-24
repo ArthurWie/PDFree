@@ -7,41 +7,86 @@ State is stored at ~/.pdfree/library.json.
 from __future__ import annotations
 
 import json
-import math
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import (
-    QRectF, QSize, Qt, QTimer, Signal,
+    QRectF,
+    Qt,
+    QTimer,
+    Signal,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QIcon, QPixmap,
+    QColor,
+    QCursor,
+    QFont,
+    QPainter,
+    QPainterPath,
+    QPen,
 )
-from icons import svg_pixmap, svg_icon
+from icons import svg_pixmap
 from utils import _make_back_button
 import subprocess
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QFileDialog, QFrame,
-    QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
 
 from colors import (
-    BG, WHITE, G100, G200, G300, G400, G500, G600, G700, G900,
-    BLUE, BLUE_ACCENT, RED, GREEN,
+    BG,
+    WHITE,
+    G50,
+    G100,
+    G200,
+    G300,
+    G400,
+    G500,
+    G600,
+    G700,
+    G900,
+    BLUE,
+    BLUE_ACCENT,
+    BLUE_DIM,
+    RED,
+    RED_DIM,
+    RED_MED,
+    AMBER,
+    AMBER_BG,
 )
 
-FOLDER_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444",
-                 "#8B5CF6", "#EC4899", "#06B6D4", "#F97316"]
+FOLDER_COLORS = [
+    "#3B82F6",
+    "#10B981",
+    "#F59E0B",
+    "#EF4444",
+    "#8B5CF6",
+    "#EC4899",
+    "#06B6D4",
+    "#F97316",
+]
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
 
-_STATE_PATH = Path.home() / ".pdfree" / "library.json"
+_STATE_PATH = (
+    Path(os.environ.get("PDFREE_STATE_DIR", Path.home() / ".pdfree")) / "library.json"
+)
 
 
 def _now_iso() -> str:
@@ -63,16 +108,16 @@ def _age_str(iso: str) -> str:
         if s < 86400:
             return f"{s // 3600}h ago"
         return f"{s // 86400}d ago"
-    except Exception:
+    except (ValueError, OverflowError):
         return ""
 
 
 def _fmt_size(b: int) -> str:
     if b < 1024:
         return f"{b} B"
-    if b < 1024 ** 2:
+    if b < 1024**2:
         return f"{b / 1024:.1f} KB"
-    return f"{b / 1024 ** 2:.1f} MB"
+    return f"{b / 1024**2:.1f} MB"
 
 
 def _file_size(path: str) -> int:
@@ -86,9 +131,11 @@ class LibraryState:
     """JSON-backed library state."""
 
     def __init__(self, on_dirty=None):
-        self._path    = _STATE_PATH
-        self._data: dict = {"files": [], "folders": []}
-        self._on_dirty = on_dirty  # called when data changes; defaults to immediate _save
+        self._path = _STATE_PATH
+        self._data: dict = {"files": [], "folders": [], "tool_clicks": {}}
+        self._on_dirty = (
+            on_dirty  # called when data changes; defaults to immediate _save
+        )
         self._load()
 
     def _request_save(self):
@@ -110,10 +157,11 @@ class LibraryState:
                 with open(self._path, encoding="utf-8") as f:
                     loaded = json.load(f)
                     self._data = {
-                        "files":   loaded.get("files",   []),
+                        "files": loaded.get("files", []),
                         "folders": loaded.get("folders", []),
+                        "tool_clicks": loaded.get("tool_clicks", {}),
                     }
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             pass
 
     def _save(self):
@@ -121,7 +169,7 @@ class LibraryState:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._path, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, indent=2)
-        except Exception:
+        except OSError:
             pass
 
     # ---- File tracking ----------------------------------------------------
@@ -137,16 +185,38 @@ class LibraryState:
                 entry["size"] = size
                 self._request_save()
                 return
-        self._data["files"].append({
-            "path":        path,
-            "name":        name,
-            "last_opened": _now_iso(),
-            "size":        size,
-            "favorited":   False,
-            "trashed":     False,
-            "folder":      None,
-        })
+        self._data["files"].append(
+            {
+                "path": path,
+                "name": name,
+                "last_opened": _now_iso(),
+                "size": size,
+                "favorited": False,
+                "trashed": False,
+                "folder": None,
+            }
+        )
         self._request_save()
+
+    # ---- Tool usage tracking ----------------------------------------------
+
+    def track_tool(self, tool_id: str) -> None:
+        clicks = self._data.setdefault("tool_clicks", {})
+        clicks[tool_id] = clicks.get(tool_id, 0) + 1
+        self._request_save()
+
+    def top_tools(self, n: int = 4) -> list[str]:
+        _DEFAULTS = ["view", "split", "merge", "excerpt"]
+        clicks = self._data.get("tool_clicks", {})
+        ranked = sorted(clicks, key=lambda k: clicks[k], reverse=True)
+        result = [t for t in ranked if t not in ("library",)][:n]
+        # Pad with defaults if not enough data
+        for fallback in _DEFAULTS:
+            if len(result) >= n:
+                break
+            if fallback not in result:
+                result.append(fallback)
+        return result[:n]
 
     def set_favorite(self, path: str, val: bool):
         for e in self._data["files"]:
@@ -154,6 +224,21 @@ class LibraryState:
                 e["favorited"] = val
                 break
         self._request_save()
+
+    def get_last_page(self, path: str) -> int:
+        path = str(Path(path).resolve())
+        for e in self._data["files"]:
+            if e["path"] == path:
+                return e.get("last_page", 0)
+        return 0
+
+    def set_last_page(self, path: str, page: int) -> None:
+        path = str(Path(path).resolve())
+        for e in self._data["files"]:
+            if e["path"] == path and not e.get("trashed", False):
+                e["last_page"] = page
+                self._request_save()
+                return
 
     def trash(self, path: str):
         for e in self._data["files"]:
@@ -181,8 +266,10 @@ class LibraryState:
         if any(f["path"] == folder_path for f in self._data["folders"]):
             return False
         color = FOLDER_COLORS[len(self._data["folders"]) % len(FOLDER_COLORS)]
-        name  = Path(folder_path).name
-        self._data["folders"].append({"path": folder_path, "name": name, "color": color})
+        name = Path(folder_path).name
+        self._data["folders"].append(
+            {"path": folder_path, "name": name, "color": color}
+        )
         self._request_save()
         return True
 
@@ -206,10 +293,11 @@ class LibraryState:
             if not d.is_dir():
                 return []
             return sorted(
-                str(p) for p in d.iterdir()
+                str(p)
+                for p in d.iterdir()
                 if p.is_file() and p.suffix.lower() == ".pdf"
             )
-        except Exception:
+        except OSError:
             return []
 
     # ---- Queries ----------------------------------------------------------
@@ -218,7 +306,9 @@ class LibraryState:
         return not q or q in entry["name"].lower()
 
     def all_active(self, q: str = "") -> list[dict]:
-        return [e for e in self._data["files"] if not e["trashed"] and self._match(e, q)]
+        return [
+            e for e in self._data["files"] if not e["trashed"] and self._match(e, q)
+        ]
 
     def recent(self, n: int = 20, q: str = "") -> list[dict]:
         files = self.all_active(q)
@@ -243,14 +333,16 @@ class LibraryState:
                 results.append(tracked[p])
             else:
                 # Build a temporary entry for untracked files
-                results.append({
-                    "path":        p,
-                    "name":        name,
-                    "last_opened": "",
-                    "size":        _file_size(p),
-                    "favorited":   False,
-                    "trashed":     False,
-                })
+                results.append(
+                    {
+                        "path": p,
+                        "name": name,
+                        "last_opened": "",
+                        "size": _file_size(p),
+                        "favorited": False,
+                        "trashed": False,
+                    }
+                )
         return results
 
     def folder_stats(self, folder_path: str) -> tuple[int, int]:
@@ -266,6 +358,7 @@ class LibraryState:
 # ---------------------------------------------------------------------------
 # Small helper widgets
 # ---------------------------------------------------------------------------
+
 
 class _SectionHdr(QLabel):
     """Small uppercase grey section label."""
@@ -286,7 +379,7 @@ class _NavBtn(QFrame):
 
     def __init__(self, key: str, icon: str, label: str, parent=None):
         super().__init__(parent)
-        self._key    = key
+        self._key = key
         self._active = False
         self.setFixedHeight(38)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -312,10 +405,10 @@ class _NavBtn(QFrame):
 
     def _apply_style(self):
         if self._active:
-            bg   = BLUE
+            bg = BLUE
             text = WHITE
         else:
-            bg   = "transparent"
+            bg = "transparent"
             text = G700
         self.setStyleSheet(f"""
             QFrame {{
@@ -340,20 +433,26 @@ class _NavBtn(QFrame):
 class _PdfIcon(QWidget):
     """Small painted PDF page icon."""
 
-    def __init__(self, w: int = 40, h: int = 50, color: str = BLUE_ACCENT,
-                 bg: str = G100, parent=None):
+    def __init__(
+        self,
+        w: int = 40,
+        h: int = 50,
+        color: str = BLUE_ACCENT,
+        bg: str = G100,
+        parent=None,
+    ):
         super().__init__(parent)
         self._color = QColor(color)
-        self._bg    = QColor(bg)
+        self._bg = QColor(bg)
         self.setFixedSize(w, h)
 
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), self._bg)
-        W, H  = self.width(), self.height()
-        fold  = W * 0.28
-        pen   = QPen(self._color, 1.5)
+        W, H = self.width(), self.height()
+        fold = W * 0.28
+        pen = QPen(self._color, 1.5)
         p.setPen(pen)
         p.setBrush(QColor(WHITE))
 
@@ -382,6 +481,7 @@ class _PdfIcon(QWidget):
 # HeroBanner
 # ---------------------------------------------------------------------------
 
+
 class HeroBanner(QFrame):
     """Green gradient hero card showing the most recently opened PDF."""
 
@@ -401,6 +501,7 @@ class HeroBanner(QFrame):
 
     def paintEvent(self, event):
         from PySide6.QtGui import QLinearGradient
+
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         grad = QLinearGradient(0, 0, self.width(), 0)
@@ -432,7 +533,7 @@ class HeroBanner(QFrame):
         if self._entry is not None:
             entry = self._entry
             name = Path(self._entry["path"]).stem
-            age  = _age_str(self._entry.get("last_opened", ""))
+            age = _age_str(self._entry.get("last_opened", ""))
 
             name_lbl = QLabel(name)
             name_lbl.setStyleSheet(
@@ -497,16 +598,19 @@ class HeroBanner(QFrame):
             # Try to get page count
             try:
                 import fitz
-                doc   = fitz.open(entry["path"])
-                pages = len(doc)
-                doc.close()
+
+                doc = fitz.open(entry["path"])
+                try:
+                    pages = len(doc)
+                finally:
+                    doc.close()
                 pg_lbl = QLabel(f"{pages} pages")
                 pg_lbl.setStyleSheet(
                     "color: rgba(255,255,255,0.70); font: 11px 'Segoe UI'; background: transparent;"
                 )
                 pg_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
                 right.addWidget(pg_lbl)
-            except Exception:
+            except (FileNotFoundError, RuntimeError):
                 pass
 
             right.addStretch()
@@ -517,24 +621,32 @@ class HeroBanner(QFrame):
 # FolderCard
 # ---------------------------------------------------------------------------
 
+
 class FolderCard(QFrame):
     """200×120 folder card with a colored top bar.
 
     clicked / delete_req emit the real filesystem path of the folder.
     """
 
-    clicked    = Signal(str)   # folder_path
-    delete_req = Signal(str)   # folder_path
+    clicked = Signal(str)  # folder_path
+    delete_req = Signal(str)  # folder_path
 
-    def __init__(self, folder_path: str, name: str, color: str,
-                 file_count: int, total_size: int, parent=None):
+    def __init__(
+        self,
+        folder_path: str,
+        name: str,
+        color: str,
+        file_count: int,
+        total_size: int,
+        parent=None,
+    ):
         super().__init__(parent)
         self._folder_path = folder_path
-        self._name  = name
+        self._name = name
         self._color = color
         self.setFixedSize(200, 120)
         self.setObjectName("FolderCard")
-        self._style_normal  = f"""
+        self._style_normal = f"""
             QFrame#FolderCard {{
                 background: {WHITE}; border-radius: 12px; border: 1px solid {G200};
             }}"""
@@ -561,7 +673,9 @@ class FolderCard(QFrame):
 
         top_row = QHBoxLayout()
         folder_lbl = QLabel()
-        folder_lbl.setPixmap(svg_pixmap("folder", "#4a627b", 22))
+        from colors import BRAND
+
+        folder_lbl.setPixmap(svg_pixmap("folder", BRAND, 22))
         folder_lbl.setStyleSheet("background: transparent;")
         top_row.addWidget(folder_lbl)
         top_row.addStretch()
@@ -664,6 +778,7 @@ class _NewFolderCard(QFrame):
 # _PdfBadge  —  small red "PDF" label
 # ---------------------------------------------------------------------------
 
+
 class _PdfBadge(QLabel):
     """Red gradient rounded badge with white 'PDF' text."""
 
@@ -688,6 +803,7 @@ class _PdfBadge(QLabel):
 # _RecentFileCard  —  horizontal card in the recent strip
 # ---------------------------------------------------------------------------
 
+
 class _RecentFileCard(QFrame):
     """Horizontal card for the 'Recent Files' strip above the table."""
 
@@ -708,7 +824,7 @@ class _RecentFileCard(QFrame):
                 border-radius: 10px;
             }}
             QFrame#RFC:hover {{
-                background: #F9FAFB;
+                background: {G50};
             }}
         """)
 
@@ -750,10 +866,11 @@ class _RecentFileCard(QFrame):
 # _FileTableRow  —  single row in the file table
 # ---------------------------------------------------------------------------
 
+
 class _FileTableRow(QFrame):
     """Full-width table row matching the screenshot design."""
 
-    open_req   = Signal(str)
+    open_req = Signal(str)
     toggle_sel = Signal(str, bool)
     toggle_fav = Signal(str, bool)
 
@@ -761,10 +878,10 @@ class _FileTableRow(QFrame):
 
     def __init__(self, entry: dict, selected: bool = False, parent=None):
         super().__init__(parent)
-        self._entry    = entry
+        self._entry = entry
         self._selected = selected
-        self._fav      = entry.get("favorited", False)
-        self._exists   = os.path.exists(entry.get("path", ""))
+        self._fav = entry.get("favorited", False)
+        self._exists = os.path.exists(entry.get("path", ""))
 
         self.setFixedHeight(self.ROW_H)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -774,16 +891,16 @@ class _FileTableRow(QFrame):
 
     def _apply_style(self, hover: bool = False):
         if self._selected:
-            bg = "#EFF6FF"
+            bg = BLUE_DIM
         elif hover:
-            bg = "#FAFAFA"
+            bg = G50
         else:
             bg = WHITE
         self.setStyleSheet(f"""
             QFrame {{
                 background: {bg};
                 border: none;
-                border-bottom: 1px solid #F3F4F6;
+                border-bottom: 1px solid {G100};
             }}
         """)
 
@@ -826,7 +943,9 @@ class _FileTableRow(QFrame):
         name_lbl.setStyleSheet(
             f"color: {name_color}; font: 500 13px 'Segoe UI'; border: none;"
         )
-        name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        name_lbl.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         lay.addWidget(name_lbl, 1)
 
         # ── Last opened ───────────────────────────────────────
@@ -834,9 +953,7 @@ class _FileTableRow(QFrame):
         age_lbl = QLabel(age)
         age_lbl.setFixedWidth(140)
         age_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        age_lbl.setStyleSheet(
-            f"color: {G500}; font: 13px 'Segoe UI'; border: none;"
-        )
+        age_lbl.setStyleSheet(f"color: {G500}; font: 13px 'Segoe UI'; border: none;")
         lay.addWidget(age_lbl)
 
         # ── Size ──────────────────────────────────────────────
@@ -844,9 +961,7 @@ class _FileTableRow(QFrame):
         size_lbl = QLabel(_fmt_size(size_val))
         size_lbl.setFixedWidth(100)
         size_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        size_lbl.setStyleSheet(
-            f"color: {G700}; font: 13px 'Segoe UI'; border: none;"
-        )
+        size_lbl.setStyleSheet(f"color: {G700}; font: 13px 'Segoe UI'; border: none;")
         lay.addWidget(size_lbl)
 
         # ── Star ──────────────────────────────────────────────
@@ -855,9 +970,9 @@ class _FileTableRow(QFrame):
         self._star_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: none;
-                color: {"#F59E0B" if self._fav else G300}; font: 15px;
+                color: {AMBER if self._fav else G300}; font: 15px;
             }}
-            QPushButton:hover {{ color: #F59E0B; background: #FEF3C7; border-radius: 6px; }}
+            QPushButton:hover {{ color: {AMBER}; background: {AMBER_BG}; border-radius: 6px; }}
         """)
         self._star_btn.clicked.connect(self._on_star)
         lay.addWidget(self._star_btn)
@@ -904,9 +1019,9 @@ class _FileTableRow(QFrame):
         self._star_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: none;
-                color: {"#F59E0B" if self._fav else G300}; font: 15px;
+                color: {AMBER if self._fav else G300}; font: 15px;
             }}
-            QPushButton:hover {{ color: #F59E0B; }}
+            QPushButton:hover {{ color: {AMBER}; }}
         """)
 
     def _show_menu(self):
@@ -928,19 +1043,22 @@ class _FileTableRow(QFrame):
         fav_txt = "Remove from Favorites" if self._fav else "Add to Favorites"
         menu.addAction(fav_txt, self._on_star)
         menu.addSeparator()
-        menu.addAction("Move to Trash", lambda: self.toggle_sel.emit(self._entry["path"], True))
+        menu.addAction(
+            "Move to Trash", lambda: self.toggle_sel.emit(self._entry["path"], True)
+        )
         pos = self._menu_btn.mapToGlobal(self._menu_btn.rect().bottomLeft())
         menu.exec(pos)
 
     def _show_in_explorer(self):
         import sys
+
         p = str(Path(self._entry["path"]))
         try:
             if sys.platform == "win32":
                 subprocess.Popen(["explorer", "/select,", p])
             elif sys.platform == "darwin":
                 subprocess.Popen(["open", "-R", p])
-        except Exception:
+        except OSError:
             pass
 
     def mousePressEvent(self, event):
@@ -958,13 +1076,14 @@ FileCard = _FileTableRow
 # Selection bar
 # ---------------------------------------------------------------------------
 
+
 class SelectionBar(QFrame):
     """Bottom bar that appears when files are selected."""
 
-    move_req   = Signal()
-    open_req   = Signal()
+    move_req = Signal()
+    open_req = Signal()
     delete_req = Signal()
-    clear_req  = Signal()
+    clear_req = Signal()
 
     def __init__(self, count: int, parent=None):
         super().__init__(parent)
@@ -988,7 +1107,7 @@ class SelectionBar(QFrame):
 
         for label, sig in [
             ("Show in Explorer", self.move_req),
-            ("Open",   self.open_req),
+            ("Open", self.open_req),
             ("Delete", self.delete_req),
         ]:
             btn = QPushButton(label)
@@ -996,13 +1115,13 @@ class SelectionBar(QFrame):
             is_del = label == "Delete"
             btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: {"#FEE2E2" if is_del else G100};
+                    background: {RED_DIM if is_del else G100};
                     color: {RED if is_del else G700};
                     border-radius: 8px; border: none;
                     font: 12px 'Segoe UI'; padding: 0 14px;
                 }}
                 QPushButton:hover {{
-                    background: {"#FECACA" if is_del else G200};
+                    background: {RED_MED if is_del else G200};
                 }}
             """)
             btn.clicked.connect(sig)
@@ -1025,11 +1144,12 @@ class SelectionBar(QFrame):
 # Trash row
 # ---------------------------------------------------------------------------
 
+
 class _TrashRow(QFrame):
     """Single row in the trash view."""
 
     restore_req = Signal(str)
-    delete_req  = Signal(str)
+    delete_req = Signal(str)
 
     def __init__(self, entry: dict, parent=None):
         super().__init__(parent)
@@ -1047,7 +1167,7 @@ class _TrashRow(QFrame):
         lay.setSpacing(10)
 
         icon = QLabel()
-        icon.setPixmap(svg_pixmap("file-text", "#6B7280", 18))
+        icon.setPixmap(svg_pixmap("file-text", G500, 18))
         icon.setStyleSheet("background: transparent;")
         lay.addWidget(icon)
 
@@ -1079,10 +1199,10 @@ class _TrashRow(QFrame):
         del_btn.setFixedHeight(28)
         del_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #FEE2E2; color: {RED}; border-radius: 6px;
+                background: {RED_DIM}; color: {RED}; border-radius: 6px;
                 border: none; font: 11px 'Segoe UI'; padding: 0 10px;
             }}
-            QPushButton:hover {{ background: #FECACA; }}
+            QPushButton:hover {{ background: {RED_MED}; }}
         """)
         del_btn.clicked.connect(lambda: self.delete_req.emit(self._path))
         lay.addWidget(del_btn)
@@ -1092,16 +1212,17 @@ class _TrashRow(QFrame):
 # LibraryPage
 # ---------------------------------------------------------------------------
 
+
 class LibraryPage(QWidget):
     """Full Document Library dashboard."""
 
-    open_file      = Signal(str)
+    open_file = Signal(str)
     back_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._nav_key   = "all"
-        self._search_q  = ""
+        self._nav_key = "all"
+        self._search_q = ""
         self._selected: set[str] = set()
         self._nav_btns: dict[str, _NavBtn] = {}
         self._folder_nav_btns: list[_NavBtn] = []
@@ -1205,10 +1326,10 @@ class LibraryPage(QWidget):
         lay.addSpacing(4)
 
         for key, icon, label in [
-            ("all",       "🗂",  "All Files"),
-            ("recent",    "🕐",  "Recent"),
-            ("favorites", "★",  "Favorites"),
-            ("trash",     "🗑", "Trash"),
+            ("all", "🗂", "All Files"),
+            ("recent", "🕐", "Recent"),
+            ("favorites", "★", "Favorites"),
+            ("trash", "🗑", "Trash"),
         ]:
             btn = _NavBtn(key, icon, label)
             btn.clicked.connect(self._on_nav)
@@ -1316,7 +1437,7 @@ class LibraryPage(QWidget):
         elif self._nav_key == "trash":
             self._build_trash_view(v)
         elif self._nav_key.startswith("folder:"):
-            folder_path = self._nav_key[len("folder:"):]
+            folder_path = self._nav_key[len("folder:") :]
             self._build_folder_view(v, folder_path, q)
 
         v.addStretch()
@@ -1493,8 +1614,8 @@ class LibraryPage(QWidget):
         h = QHBoxLayout(hdr)
         h.setContentsMargins(20, 0, 12, 0)
         h.setSpacing(0)
-        h.addSpacing(15 + 14)   # checkbox + gap
-        h.addSpacing(30 + 10)   # badge + gap
+        h.addSpacing(15 + 14)  # checkbox + gap
+        h.addSpacing(30 + 10)  # badge + gap
 
         def _hdr_lbl(text: str, width: int = 0) -> QLabel:
             lbl = QLabel(text.upper())
@@ -1509,7 +1630,7 @@ class LibraryPage(QWidget):
         h.addWidget(_hdr_lbl("Name"), 1)
         h.addWidget(_hdr_lbl("Last Opened", 140))
         h.addWidget(_hdr_lbl("Size", 100))
-        h.addSpacing(28 + 28)   # star + menu
+        h.addSpacing(28 + 28)  # star + menu
         v.addWidget(hdr)
 
         for i, entry in enumerate(files):
@@ -1568,8 +1689,9 @@ class LibraryPage(QWidget):
 
     def _open_file(self, path: str):
         if not os.path.exists(path):
-            QMessageBox.warning(self, "File not found",
-                                f"The file no longer exists:\n{path}")
+            QMessageBox.warning(
+                self, "File not found", f"The file no longer exists:\n{path}"
+            )
             return
         self.state.track(path)
         self.open_file.emit(path)
@@ -1582,15 +1704,17 @@ class LibraryPage(QWidget):
         if folder_path:
             if not self.state.add_folder(folder_path):
                 QMessageBox.information(
-                    self, "Already Added",
-                    f"'{Path(folder_path).name}' is already in your library."
+                    self,
+                    "Already Added",
+                    f"'{Path(folder_path).name}' is already in your library.",
                 )
             self._refresh_content()
 
     def _delete_folder(self, folder_path: str):
         name = Path(folder_path).name
         reply = QMessageBox.question(
-            self, "Remove Folder",
+            self,
+            "Remove Folder",
             f"Remove '{name}' from the library?\n\n"
             "The folder and its files will NOT be deleted from your PC.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1607,13 +1731,15 @@ class LibraryPage(QWidget):
         # OS-level operation. Open the first selected file's folder instead.
         for path in self._selected:
             containing = str(Path(path).parent)
-            import subprocess, sys
+            import subprocess
+            import sys
+
             try:
                 if sys.platform == "win32":
                     subprocess.Popen(["explorer", containing])
                 elif sys.platform == "darwin":
                     subprocess.Popen(["open", containing])
-            except Exception:
+            except OSError:
                 pass
             break
 
@@ -1621,7 +1747,8 @@ class LibraryPage(QWidget):
         if not self._selected:
             return
         reply = QMessageBox.question(
-            self, "Move to Trash",
+            self,
+            "Move to Trash",
             f"Move {len(self._selected)} file(s) to trash?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -1638,7 +1765,8 @@ class LibraryPage(QWidget):
 
     def _delete_permanently(self, path: str):
         reply = QMessageBox.question(
-            self, "Delete Permanently",
+            self,
+            "Delete Permanently",
             "This cannot be undone. Delete permanently?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
