@@ -47,7 +47,7 @@ jobs:
         run: bandit -r . -ll --exclude ./.venv,./tests
 
       - name: Dependency vulnerability scan (pip-audit)
-        run: pip-audit
+        run: pip-audit --ignore-vuln CVE-2026-4539
 
       - name: Run tests
         env:

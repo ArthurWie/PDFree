@@ -14,4 +14,3 @@ ruff>=0.4
 bandit[toml]>=1.7
 pip-audit>=2.7
 pip>=26.0
-pygments!=2.19.2
