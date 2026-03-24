@@ -3036,13 +3036,16 @@ def _install_crash_reporter(app: "QApplication") -> None:
     _original_hook = sys.excepthook
 
     def _hook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            _original_hook(exc_type, exc_value, exc_tb)
+            return
         logger.critical(
             "Uncaught exception",
             exc_info=(exc_type, exc_value, exc_tb),
         )
         tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
 
-        msg = QMessageBox()
+        msg = QMessageBox(app.activeWindow())
         msg.setWindowTitle("PDFree crashed")
         msg.setIcon(QMessageBox.Icon.Critical)
         msg.setText(
