@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QProgressBar,
-    QSizePolicy,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPainter, QColor, QPen, QFont, QDragEnterEvent, QDropEvent

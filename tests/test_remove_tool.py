@@ -30,7 +30,9 @@ def test_remove_keeps_specified_pages(tmp_path):
     pages_to_keep = [0]
     results = {}
     worker = _RemovePagesWorker(str(src), str(out), pages_to_keep)
-    worker.finished.connect(lambda path, removed, kept: results.update({"done": True, "kept": kept}))
+    worker.finished.connect(
+        lambda path, removed, kept: results.update({"done": True, "kept": kept})
+    )
     worker.failed.connect(lambda e: results.update({"error": e}))
     worker.start()
     worker.wait(15000)

@@ -108,6 +108,7 @@ class _SanitizeWorker(QThread):
                 repair_doc.save(repair_tmp, garbage=4, deflate=True, clean=True)
                 repair_doc.close()
                 import os
+
                 os.replace(repair_tmp, self._out_path)
 
             self.finished.emit(self._out_path)

@@ -3481,13 +3481,18 @@ class ViewTool(QWidget):
             return
         pane = self.active_pane
         pane._scroll_area.hide()
-        zoom = self._effective_zoom() if self.zoom in (FIT_PAGE, FIT_WIDTH) else self.zoom
+        zoom = (
+            self._effective_zoom() if self.zoom in (FIT_PAGE, FIT_WIDTH) else self.zoom
+        )
         self._continuous_pane = _ContinuousPane(pane.pdf_path, zoom=zoom, parent=pane)
         pane.layout().insertWidget(0, self._continuous_pane)
         self._continuous_pane.page_changed.connect(self._on_continuous_page_changed)
         QTimer.singleShot(
             50,
-            lambda: self._continuous_pane and self._continuous_pane.scroll_to_page(self.current_page),
+            lambda: (
+                self._continuous_pane
+                and self._continuous_pane.scroll_to_page(self.current_page)
+            ),
         )
 
     def _teardown_continuous(self) -> None:
@@ -4346,7 +4351,9 @@ class ViewTool(QWidget):
                 rb._pdf_widget = widget
                 rb._pdf_page_idx = self.current_page
                 rb.toggled.connect(
-                    lambda checked, wgt=widget, b=rb: self._update_radio(wgt, b) if checked else None
+                    lambda checked, wgt=widget, b=rb: (
+                        self._update_radio(wgt, b) if checked else None
+                    )
                 )
                 rb.show()
                 self._form_widgets.append(rb)

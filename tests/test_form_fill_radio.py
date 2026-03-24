@@ -1,4 +1,5 @@
-import shutil, fitz
+import shutil
+import fitz
 from pathlib import Path
 import pytest
 

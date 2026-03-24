@@ -26,9 +26,9 @@ _API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 _STAMP_FILE = "last_update_check.txt"
 
 _ASSET_PATTERNS = {
-    "win32":  "_Setup.exe",
+    "win32": "_Setup.exe",
     "darwin": ".dmg",
-    "linux":  ".AppImage",
+    "linux": ".AppImage",
 }
 
 
@@ -108,7 +108,9 @@ class UpdateChecker(QThread):
             with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 — URL is a hardcoded https:// constant, never user-supplied
                 data = json.loads(resp.read().decode())
             tag = data.get("tag_name", "")
-            html_url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases")
+            html_url = data.get(
+                "html_url", f"https://github.com/{GITHUB_REPO}/releases"
+            )
             assets = data.get("assets") or []
             download_url = _pick_asset_url(assets) or html_url
             if tag and _is_newer(tag):

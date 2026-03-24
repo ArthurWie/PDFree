@@ -25,7 +25,9 @@ def test_nup_2up_reduces_page_count(tmp_path):
     src_doc = fitz.open(str(src))
     total = src_doc.page_count
     src_doc.close()
-    assert total > 2, "multipage.pdf must have more than 2 pages for 2-up to reduce count"
+    assert total > 2, (
+        "multipage.pdf must have more than 2 pages for 2-up to reduce count"
+    )
 
     # A4 landscape
     out_w, out_h = 841.89, 595.28

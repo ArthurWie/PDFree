@@ -10,6 +10,7 @@ def test_base_tool_is_abstract():
 
 def test_concrete_tool_must_implement_cleanup():
     """A subclass that omits cleanup() raises TypeError on instantiation."""
+
     class BadTool(BaseTool):
         @property
         def _modified(self):

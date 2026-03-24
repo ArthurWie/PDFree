@@ -41,7 +41,12 @@ def test_add_image_produces_valid_pdf(tmp_path):
     results = {}
 
     worker = _AddImageWorker(
-        str(src), str(img_path), page_idx=0, rect=rect, keep_aspect=True, out_path=str(out)
+        str(src),
+        str(img_path),
+        page_idx=0,
+        rect=rect,
+        keep_aspect=True,
+        out_path=str(out),
     )
     worker.finished.connect(lambda *a: results.update({"done": True}))
     worker.failed.connect(lambda e: results.update({"error": e}))
@@ -72,7 +77,12 @@ def test_add_image_top_left_position(tmp_path):
     results = {}
 
     worker = _AddImageWorker(
-        str(src), str(img_path), page_idx=0, rect=rect, keep_aspect=False, out_path=str(out)
+        str(src),
+        str(img_path),
+        page_idx=0,
+        rect=rect,
+        keep_aspect=False,
+        out_path=str(out),
     )
     worker.finished.connect(lambda *a: results.update({"done": True}))
     worker.failed.connect(lambda e: results.update({"error": e}))
@@ -105,7 +115,12 @@ def test_add_image_multipage_second_page(tmp_path):
     results = {}
 
     worker = _AddImageWorker(
-        str(src), str(img_path), page_idx=page_idx, rect=rect, keep_aspect=True, out_path=str(out)
+        str(src),
+        str(img_path),
+        page_idx=page_idx,
+        rect=rect,
+        keep_aspect=True,
+        out_path=str(out),
     )
     worker.finished.connect(lambda *a: results.update({"done": True}))
     worker.failed.connect(lambda e: results.update({"error": e}))

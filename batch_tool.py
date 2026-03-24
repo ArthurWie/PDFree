@@ -366,8 +366,9 @@ class _BatchItemWorker(QThread):
 class _BatchCoordinator(QObject):
     all_done = Signal()
 
-    def __init__(self, tasks: list, op_id: str, settings: dict, out_dir: str,
-                 on_done, on_failed):
+    def __init__(
+        self, tasks: list, op_id: str, settings: dict, out_dir: str, on_done, on_failed
+    ):
         super().__init__()
         self._tasks = tasks
         self._op_id = op_id

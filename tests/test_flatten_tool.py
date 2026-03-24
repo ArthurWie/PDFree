@@ -44,7 +44,9 @@ def test_flatten_removes_annotations(tmp_path):
     src = _copy("annotated.pdf", tmp_path)
 
     before_doc = fitz.open(str(src))
-    before_count = sum(len(list(before_doc[i].annots())) for i in range(before_doc.page_count))
+    before_count = sum(
+        len(list(before_doc[i].annots())) for i in range(before_doc.page_count)
+    )
     before_doc.close()
 
     out = tmp_path / "out_flat_annots.pdf"
@@ -61,7 +63,9 @@ def test_flatten_removes_annotations(tmp_path):
     assert out.exists()
 
     after_doc = fitz.open(str(out))
-    after_count = sum(len(list(after_doc[i].annots())) for i in range(after_doc.page_count))
+    after_count = sum(
+        len(list(after_doc[i].annots())) for i in range(after_doc.page_count)
+    )
     after_doc.close()
 
     assert after_count < before_count or before_count == 0

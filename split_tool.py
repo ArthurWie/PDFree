@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QProgressBar,
-    QSizePolicy,
     QComboBox,
 )
 from PySide6.QtCore import Qt, QSize, QThread, Signal

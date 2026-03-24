@@ -18,14 +18,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QFileDialog,
     QMessageBox,
-    QSizePolicy,
     QComboBox,
     QSlider,
 )
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
-    QPainter,
-    QColor,
     QDragEnterEvent,
     QDropEvent,
 )

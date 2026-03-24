@@ -1,6 +1,5 @@
 import fitz
 from pathlib import Path
-import pytest
 
 CORPUS = Path(__file__).parent / "corpus"
 PLAIN_PDF = str(CORPUS / "plain.pdf")
@@ -9,6 +8,7 @@ MULTI_PDF = str(CORPUS / "multipage.pdf")
 
 def test_continuous_pane_page_count(qtbot):
     from view_tool import _ContinuousPane
+
     pane = _ContinuousPane(PLAIN_PDF)
     qtbot.addWidget(pane)
     doc = fitz.open(PLAIN_PDF)
@@ -19,6 +19,7 @@ def test_continuous_pane_page_count(qtbot):
 
 def test_continuous_pane_scroll_to_page_does_not_raise(qtbot):
     from view_tool import _ContinuousPane
+
     pane = _ContinuousPane(MULTI_PDF)
     qtbot.addWidget(pane)
     pane.show()
@@ -29,6 +30,7 @@ def test_continuous_pane_scroll_to_page_does_not_raise(qtbot):
 
 def test_continuous_pane_current_page_at_top(qtbot):
     from view_tool import _ContinuousPane
+
     pane = _ContinuousPane(PLAIN_PDF)
     qtbot.addWidget(pane)
     pane.show()
@@ -38,6 +40,7 @@ def test_continuous_pane_current_page_at_top(qtbot):
 
 def test_continuous_pane_set_zoom(qtbot):
     from view_tool import _ContinuousPane
+
     pane = _ContinuousPane(PLAIN_PDF)
     qtbot.addWidget(pane)
     pane.show()

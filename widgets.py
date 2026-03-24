@@ -1,10 +1,10 @@
 """Shared reusable Qt widgets for PDFree tool panels."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from colors import G100, G200, G400
+from colors import G100, G400
 
 
 class PreviewCanvas(QWidget):

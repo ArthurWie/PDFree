@@ -28,13 +28,9 @@ class BaseTool(QWidget):
 
     def cleanup(self):
         """Release all resources held by this tool."""
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement cleanup()"
-        )
+        raise NotImplementedError(f"{type(self).__name__} must implement cleanup()")
 
     @property
     def _modified(self):
         """True if the tool has unsaved changes."""
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _modified"
-        )
+        raise NotImplementedError(f"{type(self).__name__} must implement _modified")
