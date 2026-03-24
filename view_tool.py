@@ -4344,6 +4344,7 @@ class ViewTool(QWidget):
                 on_val = widget.on_state()
                 rb.setChecked(widget.field_value == on_val)
                 rb._pdf_widget = widget
+                rb._pdf_page_idx = self.current_page
                 rb.toggled.connect(
                     lambda checked, wgt=widget, b=rb: self._update_radio(wgt, b) if checked else None
                 )
@@ -4385,7 +4386,8 @@ class ViewTool(QWidget):
         if not btn.isChecked():
             return
         self._push_undo()
-        page = self.doc[self.current_page]
+        page_idx = getattr(btn, "_pdf_page_idx", self.current_page)
+        page = self.doc[page_idx]
         target_rect = fitz.Rect(widget.rect)
         for w in page.widgets():
             if w.field_name == widget.field_name:
