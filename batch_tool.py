@@ -54,14 +54,6 @@ logger = logging.getLogger(__name__)
 # Operation catalogue
 # ---------------------------------------------------------------------------
 
-_OPS = [
-    ("compress", "Compress"),
-    ("rotate", "Rotate Pages"),
-    ("add_page_numbers", "Add Page Numbers"),
-    ("add_password", "Add Password"),
-    ("remove_password", "Remove Password"),
-]
-
 _COMPRESS_PRESETS = ["Lossless", "Print (150 DPI)", "eBook (96 DPI)", "Screen (72 DPI)"]
 _COMPRESS_DPI = [None, 150, 96, 72]
 
@@ -227,6 +219,83 @@ def _run_remove_password(src: str, dst: str, password: str) -> None:
         doc.close()
 
 
+def _run_watermark(src: str, dst: str, kwargs: dict) -> None:
+    text = kwargs.get("text", "WATERMARK")
+    opacity = kwargs.get("opacity", 0.3)
+    color = kwargs.get("color", (128, 128, 128))
+    rgb = tuple(c / 255.0 for c in color)
+    fontsize = kwargs.get("fontsize", 48)
+    doc = fitz.open(src)
+    try:
+        font = fitz.Font("helv")
+        for page in doc:
+            tw = fitz.TextWriter(page.rect)
+            w, h = page.rect.width, page.rect.height
+            text_len = font.text_length(text, fontsize)
+            cx = max(0.0, w / 2 - text_len / 2)
+            cy = h / 2 + fontsize * 0.35
+            tw.append(fitz.Point(cx, cy), text, fontsize=fontsize, font=font)
+            pivot = fitz.Point(w / 2, h / 2)
+            mat = fitz.Matrix(-45)
+            tw.write_text(page, color=rgb, opacity=opacity, morph=(pivot, mat))
+        doc.save(dst, garbage=3, deflate=True)
+    finally:
+        doc.close()
+
+
+def _run_pdf_to_pdfa(src: str, dst: str, kwargs: dict) -> None:
+    from pdfa_tool import convert_to_pdfa
+
+    conformance = kwargs.get("conformance", "PDF/A-2b")
+    part_map = {"PDF/A-1b": ("1", "B"), "PDF/A-2b": ("2", "B"), "PDF/A-3b": ("3", "B")}
+    if conformance not in part_map:
+        raise ValueError(f"Unsupported conformance level: {conformance!r}")
+    part, conf = part_map[conformance]
+    convert_to_pdfa(src, dst, part=part, conformance=conf)
+
+
+# ---------------------------------------------------------------------------
+# Operation registry
+# ---------------------------------------------------------------------------
+
+BATCH_REGISTRY = {
+    "compress": {
+        "label": "Compress",
+        "run": lambda src, dst, kw: _run_compress(src, dst, kw["preset_idx"]),
+    },
+    "rotate": {
+        "label": "Rotate Pages",
+        "run": lambda src, dst, kw: _run_rotate(src, dst, kw["degrees"]),
+    },
+    "add_page_numbers": {
+        "label": "Add Page Numbers",
+        "run": lambda src, dst, kw: _run_add_page_numbers(
+            src, dst, kw["pos_idx"], kw["fmt_idx"], kw["start"]
+        ),
+    },
+    "add_password": {
+        "label": "Add Password",
+        "run": lambda src, dst, kw: _run_add_password(
+            src, dst, kw["password"], kw["enc_idx"]
+        ),
+    },
+    "remove_password": {
+        "label": "Remove Password",
+        "run": lambda src, dst, kw: _run_remove_password(src, dst, kw["password"]),
+    },
+    "watermark": {
+        "label": "Add Watermark",
+        "run": _run_watermark,
+    },
+    "pdf_to_pdfa": {
+        "label": "Convert to PDF/A",
+        "run": _run_pdf_to_pdfa,
+    },
+}
+
+_OPS = [(op_id, entry["label"]) for op_id, entry in BATCH_REGISTRY.items()]
+
+
 # ---------------------------------------------------------------------------
 # Worker thread
 # ---------------------------------------------------------------------------
@@ -261,17 +330,10 @@ class _BatchWorker(QThread):
         self.all_done.emit()
 
     def _process(self, src: str, dst: str) -> None:
-        s = self._settings
-        if self._op_id == "compress":
-            _run_compress(src, dst, s["preset_idx"])
-        elif self._op_id == "rotate":
-            _run_rotate(src, dst, s["degrees"])
-        elif self._op_id == "add_page_numbers":
-            _run_add_page_numbers(src, dst, s["pos_idx"], s["fmt_idx"], s["start"])
-        elif self._op_id == "add_password":
-            _run_add_password(src, dst, s["password"], s["enc_idx"])
-        elif self._op_id == "remove_password":
-            _run_remove_password(src, dst, s["password"])
+        entry = BATCH_REGISTRY.get(self._op_id)
+        if entry is None:
+            raise ValueError(f"Unknown operation: {self._op_id}")
+        entry["run"](src, dst, self._settings)
 
 
 # ---------------------------------------------------------------------------
