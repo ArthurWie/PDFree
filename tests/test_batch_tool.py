@@ -260,3 +260,14 @@ def test_run_pdfa_produces_output(tmp_path):
     _run_pdf_to_pdfa(PLAIN_PDF, dst, {"conformance": "PDF/A-2b"})
     assert Path(dst).exists()
     assert Path(dst).stat().st_size > 0
+
+
+# ---------------------------------------------------------------------------
+# _BatchItemWorker
+# ---------------------------------------------------------------------------
+
+
+def test_batch_item_worker_exists():
+    from batch_tool import _BatchItemWorker
+
+    assert _BatchItemWorker is not None
