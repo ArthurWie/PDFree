@@ -5,6 +5,7 @@ PySide6. Loaded by main.py when the user clicks "Rotate".
 
 import logging
 from pathlib import Path
+from base_tool import BaseTool
 from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
@@ -235,10 +236,14 @@ class _PageCell(QFrame):
 # ===========================================================================
 
 
-class RotateTool(QWidget):
+class RotateTool(BaseTool):
+    @property
+    def _modified(self):
+        return self.__modified
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._modified = False
+        self.__modified = False
 
         if fitz is None or PdfReader is None:
             lay = QVBoxLayout(self)
@@ -690,7 +695,7 @@ class RotateTool(QWidget):
         ]
         self._thumb_timer.start(0)
         self._update_controls()
-        self._modified = any(v % 360 != 0 for v in self._rotations.values())
+        self.__modified = any(v % 360 != 0 for v in self._rotations.values())
 
     def _rotate_selected(self, delta: int):
         if not self._selected:

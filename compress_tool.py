@@ -12,6 +12,7 @@ Print     – re-render at 150 DPI. Near-print quality with size savings.
 
 import logging
 from pathlib import Path
+from base_tool import BaseTool
 from utils import assert_file_writable, backup_original
 
 from PySide6.QtWidgets import (
@@ -307,10 +308,14 @@ class _CompressWorker(QThread):
 # ===========================================================================
 
 
-class CompressTool(QWidget):
+class CompressTool(BaseTool):
+    @property
+    def _modified(self):
+        return self.__modified
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._modified = False
+        self.__modified = False
         self._worker = None
 
         if fitz is None:

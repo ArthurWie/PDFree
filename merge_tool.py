@@ -10,6 +10,7 @@ Reordering or removing a file instantly updates the preview.
 import io
 import logging
 from pathlib import Path
+from base_tool import BaseTool
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -433,10 +434,14 @@ class _MergeWorker(QThread):
 # ===========================================================================
 
 
-class MergeTool(QWidget):
+class MergeTool(BaseTool):
+    @property
+    def _modified(self):
+        return self.__modified
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._modified = False
+        self.__modified = False
         self._worker = None
 
         if fitz is None or PdfReader is None:
