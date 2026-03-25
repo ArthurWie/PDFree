@@ -10,8 +10,10 @@ a = Analysis(
     binaries=[],
     datas=[
         ('LOGO.svg', '.'),
+        ('translations', 'translations'),
     ],
     hiddenimports=[
+        'i18n',
         'pdfplumber',
         'pdfminer',
         'pdfminer.high_level',
