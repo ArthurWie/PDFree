@@ -25,6 +25,7 @@ a = Analysis(
         'PySide6.QtSvg',
         'PySide6.QtSvgWidgets',
         'PySide6.QtDBus',
+        'PySide6.QtNetwork',
     ],
     hookspath=[],
     hooksconfig={},

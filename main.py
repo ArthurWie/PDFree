@@ -3120,7 +3120,8 @@ if __name__ == "__main__":
     # Start single-instance server so future instances can forward paths here.
     QLocalServer.removeServer("PDFree")
     _server = QLocalServer()
-    _server.listen("PDFree")
+    if not _server.listen("PDFree"):
+        logger.warning("single-instance server could not bind: %s", _server.errorString())
 
     def _on_new_connection():
         conn = _server.nextPendingConnection()
@@ -3135,6 +3136,8 @@ if __name__ == "__main__":
         ]
         if paths:
             window.open_pdfs(paths)
+        if window.isMinimized():
+            window.showNormal()
         window.raise_()
         window.activateWindow()
 

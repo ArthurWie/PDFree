@@ -26,6 +26,7 @@ a = Analysis(
         'PIL._tkinter_finder',
         'PySide6.QtSvg',
         'PySide6.QtSvgWidgets',
+        'PySide6.QtNetwork',
     ],
     hookspath=[],
     hooksconfig={},
