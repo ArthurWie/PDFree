@@ -2174,6 +2174,19 @@ class PDFreeApp(QMainWindow):
     def _open_file(self, path: str):
         self.show_tool("view", path)
 
+    def open_pdfs(self, paths: list) -> None:
+        from view_tool import ViewTool
+
+        if not paths:
+            return
+        if isinstance(self._current_tool, ViewTool):
+            for p in paths:
+                self._current_tool.open_file(p)
+        else:
+            self.show_tool("view", paths[0])
+            for p in paths[1:]:
+                self._current_tool.open_file(p)
+
     def _upload_new(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Upload PDF", "", "PDF files (*.pdf)"
