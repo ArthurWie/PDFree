@@ -3083,6 +3083,24 @@ def _install_crash_reporter(app: "QApplication") -> None:
 
 if __name__ == "__main__":
     from updater import UpdateChecker
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
+
+    argv_paths = [
+        p for p in sys.argv[1:]
+        if p.lower().endswith(".pdf") and os.path.isfile(p)
+    ]
+
+    # If another instance is already running, forward paths to it and exit.
+    _probe = QLocalSocket()
+    _probe.connectToServer("PDFree")
+    if _probe.waitForConnected(500):
+        if argv_paths:
+            _probe.write("\n".join(argv_paths).encode())
+            _probe.flush()
+            _probe.waitForBytesWritten(1000)
+        _probe.close()
+        sys.exit(0)
+    _probe.close()
 
     app = QApplication(sys.argv)
     _install_crash_reporter(app)
@@ -3095,6 +3113,32 @@ if __name__ == "__main__":
 
     apply_theme(is_dark())
     window.show()
+
+    if argv_paths:
+        window.open_pdfs(argv_paths)
+
+    # Start single-instance server so future instances can forward paths here.
+    QLocalServer.removeServer("PDFree")
+    _server = QLocalServer()
+    _server.listen("PDFree")
+
+    def _on_new_connection():
+        conn = _server.nextPendingConnection()
+        if conn is None:
+            return
+        conn.waitForReadyRead(1000)
+        raw = conn.readAll().data().decode(errors="ignore")
+        conn.close()
+        paths = [
+            p for p in raw.split("\n")
+            if p and p.lower().endswith(".pdf") and os.path.isfile(p)
+        ]
+        if paths:
+            window.open_pdfs(paths)
+        window.raise_()
+        window.activateWindow()
+
+    _server.newConnection.connect(_on_new_connection)
 
     _checker = UpdateChecker()
     _checker.update_available.connect(_on_update_available)
