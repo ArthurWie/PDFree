@@ -2184,8 +2184,9 @@ class PDFreeApp(QMainWindow):
                 self._current_tool.open_file(p)
         else:
             self.show_tool("view", paths[0])
-            for p in paths[1:]:
-                self._current_tool.open_file(p)
+            if self._current_tool is not None:
+                for p in paths[1:]:
+                    self._current_tool.open_file(p)
 
     def _upload_new(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -3090,6 +3091,8 @@ if __name__ == "__main__":
         if p.lower().endswith(".pdf") and os.path.isfile(p)
     ]
 
+    app = QApplication(sys.argv)
+
     # If another instance is already running, forward paths to it and exit.
     _probe = QLocalSocket()
     _probe.connectToServer("PDFree")
@@ -3102,7 +3105,12 @@ if __name__ == "__main__":
         sys.exit(0)
     _probe.close()
 
-    app = QApplication(sys.argv)
+    # Claim the server slot immediately so no second instance slips in.
+    QLocalServer.removeServer("PDFree")
+    _server = QLocalServer()
+    if not _server.listen("PDFree"):
+        logger.warning("single-instance server could not bind: %s", _server.errorString())
+
     _install_crash_reporter(app)
     _install_translator(app)
     app.setStyle("Fusion")
@@ -3116,12 +3124,6 @@ if __name__ == "__main__":
 
     if argv_paths:
         window.open_pdfs(argv_paths)
-
-    # Start single-instance server so future instances can forward paths here.
-    QLocalServer.removeServer("PDFree")
-    _server = QLocalServer()
-    if not _server.listen("PDFree"):
-        logger.warning("single-instance server could not bind: %s", _server.errorString())
 
     def _on_new_connection():
         conn = _server.nextPendingConnection()
