@@ -29,22 +29,20 @@ from PySide6.QtGui import (
 )
 from icons import svg_pixmap
 from utils import _make_back_button
-import subprocess
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from styled_table import StyledTable
 from colors import (
     BG,
     WHITE,
@@ -59,12 +57,9 @@ from colors import (
     G900,
     BLUE,
     BLUE_ACCENT,
-    BLUE_DIM,
     RED,
     RED_DIM,
     RED_MED,
-    AMBER,
-    AMBER_BG,
 )
 
 FOLDER_COLORS = [
@@ -863,216 +858,6 @@ class _RecentFileCard(QFrame):
 
 
 # ---------------------------------------------------------------------------
-# _FileTableRow  —  single row in the file table
-# ---------------------------------------------------------------------------
-
-
-class _FileTableRow(QFrame):
-    """Full-width table row matching the screenshot design."""
-
-    open_req = Signal(str)
-    toggle_sel = Signal(str, bool)
-    toggle_fav = Signal(str, bool)
-
-    ROW_H = 48
-
-    def __init__(self, entry: dict, selected: bool = False, parent=None):
-        super().__init__(parent)
-        self._entry = entry
-        self._selected = selected
-        self._fav = entry.get("favorited", False)
-        self._exists = os.path.exists(entry.get("path", ""))
-
-        self.setFixedHeight(self.ROW_H)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        self._apply_style()
-        self._build_ui()
-
-    def _apply_style(self, hover: bool = False):
-        if self._selected:
-            bg = BLUE_DIM
-        elif hover:
-            bg = G50
-        else:
-            bg = WHITE
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: {bg};
-                border: none;
-                border-bottom: 1px solid {G100};
-            }}
-        """)
-
-    def _build_ui(self):
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(20, 0, 12, 0)
-        lay.setSpacing(0)
-
-        # ── Checkbox ────────────────────────────────────────
-        self._chk = QPushButton()
-        self._chk.setFixedSize(15, 15)
-        if self._selected:
-            self._chk.setStyleSheet(f"""
-                QPushButton {{
-                    border: 1.5px solid {BLUE_ACCENT}; border-radius: 3px;
-                    background: {BLUE_ACCENT}; color: white; font: bold 10px;
-                }}
-            """)
-            self._chk.setText("✓")
-        else:
-            self._chk.setStyleSheet(f"""
-                QPushButton {{
-                    border: 1.5px solid {G300}; border-radius: 3px;
-                    background: {WHITE};
-                }}
-            """)
-        self._chk.clicked.connect(self._on_check)
-        lay.addWidget(self._chk)
-        lay.addSpacing(14)
-
-        # ── PDF badge ────────────────────────────────────────
-        lay.addWidget(_PdfBadge(30))
-        lay.addSpacing(10)
-
-        # ── Name ─────────────────────────────────────────────
-        name = self._entry.get("name", Path(self._entry.get("path", "")).name)
-        name_color = "#1D4ED8" if self._selected else G900
-        name_lbl = QLabel(name)
-        name_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        name_lbl.setStyleSheet(
-            f"color: {name_color}; font: 500 13px 'Segoe UI'; border: none;"
-        )
-        name_lbl.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        lay.addWidget(name_lbl, 1)
-
-        # ── Last opened ───────────────────────────────────────
-        age = _age_str(self._entry.get("last_opened", "")) or "—"
-        age_lbl = QLabel(age)
-        age_lbl.setFixedWidth(140)
-        age_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        age_lbl.setStyleSheet(f"color: {G500}; font: 13px 'Segoe UI'; border: none;")
-        lay.addWidget(age_lbl)
-
-        # ── Size ──────────────────────────────────────────────
-        size_val = self._entry.get("size", 0) or _file_size(self._entry.get("path", ""))
-        size_lbl = QLabel(_fmt_size(size_val))
-        size_lbl.setFixedWidth(100)
-        size_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        size_lbl.setStyleSheet(f"color: {G700}; font: 13px 'Segoe UI'; border: none;")
-        lay.addWidget(size_lbl)
-
-        # ── Star ──────────────────────────────────────────────
-        self._star_btn = QPushButton("★" if self._fav else "☆")
-        self._star_btn.setFixedSize(28, 28)
-        self._star_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: none;
-                color: {AMBER if self._fav else G300}; font: 15px;
-            }}
-            QPushButton:hover {{ color: {AMBER}; background: {AMBER_BG}; border-radius: 6px; }}
-        """)
-        self._star_btn.clicked.connect(self._on_star)
-        lay.addWidget(self._star_btn)
-
-        # ── "..." menu ────────────────────────────────────────
-        self._menu_btn = QPushButton("···")
-        self._menu_btn.setFixedSize(28, 28)
-        self._menu_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: none;
-                color: {G400}; font: bold 14px 'Segoe UI'; letter-spacing: 1px;
-            }}
-            QPushButton:hover {{
-                background: {G100}; border-radius: 6px; color: {G600};
-            }}
-        """)
-        self._menu_btn.clicked.connect(self._show_menu)
-        lay.addWidget(self._menu_btn)
-
-    def enterEvent(self, _event):
-        if not self._selected:
-            self._apply_style(hover=True)
-
-    def leaveEvent(self, _event):
-        self._apply_style()
-
-    def _on_check(self):
-        self._selected = not self._selected
-        self.toggle_sel.emit(self._entry["path"], self._selected)
-        self._apply_style()
-        # Rebuild to update checkmark and name weight
-        lay = self.layout()
-        if lay is not None:
-            for i in reversed(range(lay.count())):
-                item = lay.itemAt(i)
-                if item and item.widget():
-                    item.widget().setParent(None)
-        self._build_ui()
-
-    def _on_star(self):
-        self._fav = not self._fav
-        self.toggle_fav.emit(self._entry["path"], self._fav)
-        self._star_btn.setText("★" if self._fav else "☆")
-        self._star_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: none;
-                color: {AMBER if self._fav else G300}; font: 15px;
-            }}
-            QPushButton:hover {{ color: {AMBER}; }}
-        """)
-
-    def _show_menu(self):
-        menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background: {WHITE}; border: 1px solid {G200};
-                border-radius: 8px; padding: 4px;
-            }}
-            QMenu::item {{
-                padding: 6px 20px; color: {G700};
-                font: 13px 'Segoe UI'; border-radius: 4px;
-            }}
-            QMenu::item:selected {{ background: {G100}; }}
-            QMenu::separator {{ background: {G200}; height: 1px; margin: 4px 10px; }}
-        """)
-        menu.addAction("Open", lambda: self.open_req.emit(self._entry["path"]))
-        menu.addAction("Show in Explorer", self._show_in_explorer)
-        fav_txt = "Remove from Favorites" if self._fav else "Add to Favorites"
-        menu.addAction(fav_txt, self._on_star)
-        menu.addSeparator()
-        menu.addAction(
-            "Move to Trash", lambda: self.toggle_sel.emit(self._entry["path"], True)
-        )
-        pos = self._menu_btn.mapToGlobal(self._menu_btn.rect().bottomLeft())
-        menu.exec(pos)
-
-    def _show_in_explorer(self):
-        import sys
-
-        p = str(Path(self._entry["path"]))
-        try:
-            if sys.platform == "win32":
-                subprocess.Popen(["explorer", "/select,", p])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", "-R", p])
-        except OSError:
-            pass
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            child = self.childAt(event.pos())
-            if child and isinstance(child, QPushButton):
-                return
-            self.open_req.emit(self._entry["path"])
-
-
-FileCard = _FileTableRow
-
-
-# ---------------------------------------------------------------------------
 # Selection bar
 # ---------------------------------------------------------------------------
 
@@ -1584,63 +1369,13 @@ class LibraryPage(QWidget):
             lay.addStretch()
         return strip
 
-    def _build_file_table(self, files: list[dict]) -> QWidget:
-        container = QFrame()
-        container.setObjectName("FileTable")
-        container.setStyleSheet(f"""
-            QFrame#FileTable {{
-                background: {WHITE};
-                border: 1px solid {G200};
-                border-radius: 12px;
-            }}
-        """)
-        v = QVBoxLayout(container)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(0)
-
-        # Header row
-        hdr = QFrame()
-        hdr.setFixedHeight(38)
-        hdr.setObjectName("TblHdr")
-        hdr.setStyleSheet(f"""
-            QFrame#TblHdr {{
-                background: #F9FAFB;
-                border: none;
-                border-bottom: 1px solid {G200};
-                border-top-left-radius: 12px;
-                border-top-right-radius: 12px;
-            }}
-        """)
-        h = QHBoxLayout(hdr)
-        h.setContentsMargins(20, 0, 12, 0)
-        h.setSpacing(0)
-        h.addSpacing(15 + 14)  # checkbox + gap
-        h.addSpacing(30 + 10)  # badge + gap
-
-        def _hdr_lbl(text: str, width: int = 0) -> QLabel:
-            lbl = QLabel(text.upper())
-            lbl.setStyleSheet(
-                f"color: {G400}; font: bold 10px 'Segoe UI'; "
-                f"background: transparent; border: none; letter-spacing: 1px;"
-            )
-            if width:
-                lbl.setFixedWidth(width)
-            return lbl
-
-        h.addWidget(_hdr_lbl("Name"), 1)
-        h.addWidget(_hdr_lbl("Last Opened", 140))
-        h.addWidget(_hdr_lbl("Size", 100))
-        h.addSpacing(28 + 28)  # star + menu
-        v.addWidget(hdr)
-
-        for i, entry in enumerate(files):
-            row = _FileTableRow(entry, entry["path"] in self._selected)
-            row.open_req.connect(self._open_file)
-            row.toggle_sel.connect(self._on_toggle_sel)
-            row.toggle_fav.connect(self._on_toggle_fav)
-            v.addWidget(row)
-
-        return container
+    def _build_file_table(self, files: list[dict]) -> StyledTable:
+        table = StyledTable()
+        table.open_req.connect(self._open_file)
+        table.toggle_sel.connect(self._on_toggle_sel)
+        table.toggle_fav.connect(self._on_toggle_fav)
+        table.populate_library(files)
+        return table
 
     # ------------------------------------------------------------------
     # Sidebar helpers
