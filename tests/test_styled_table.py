@@ -66,3 +66,56 @@ def test_footer_zero_resets_to_default(app):
     f.set_count(2)
     f.set_count(0)
     assert "No rows selected" in f._left.text()
+
+
+def test_populate_sets_row_count(app):
+    from styled_table import StyledTable
+    t = StyledTable()
+    t.populate([(1, "1"), (2, "2"), (3, "iii")])
+    assert t._table.rowCount() == 3
+
+
+def test_populate_col1_is_bold(app):
+    from styled_table import StyledTable
+    t = StyledTable()
+    t.populate([(5, "v")])
+    item = t._table.item(0, 1)
+    assert item.font().bold()
+
+
+def test_populate_roman_label_is_teal(app):
+    from styled_table import StyledTable
+    from colors import TEAL
+    from PySide6.QtGui import QColor
+    t = StyledTable()
+    t.populate([(1, "i")])
+    item = t._table.item(0, 2)
+    assert item.foreground().color() == QColor(TEAL)
+
+
+def test_populate_numeric_label_is_gray(app):
+    from styled_table import StyledTable
+    from colors import G700
+    from PySide6.QtGui import QColor
+    t = StyledTable()
+    t.populate([(1, "1")])
+    item = t._table.item(0, 2)
+    assert item.foreground().color() == QColor(G700)
+
+
+def test_checkbox_col0_is_checkable(app):
+    from styled_table import StyledTable
+    from PySide6.QtCore import Qt
+    t = StyledTable()
+    t.populate([(1, "1")])
+    item = t._table.item(0, 0)
+    assert item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+
+
+def test_footer_updates_on_check(app):
+    from styled_table import StyledTable
+    from PySide6.QtCore import Qt
+    t = StyledTable()
+    t.populate([(1, "1"), (2, "2")])
+    t._table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+    assert "1 row selected" in t._footer._left.text()
