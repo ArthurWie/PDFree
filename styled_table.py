@@ -126,16 +126,16 @@ class StyledTable(QWidget):
         self._table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self._table.setStyleSheet(
-            f"QTableWidget {{ border: none; background: {WHITE}; outline: none; }}"
-            f"QTableWidget::item {{ padding: 0 12px; color: {G900};"
-            f" border-bottom: 1px solid {G200}; }}"
+            f"QTableWidget {{ border: none; background: transparent; outline: none; }}"
+            f"QTableWidget::item {{ padding: 0 12px; color: {G900}; }}"
             f"QTableWidget::item:selected {{ background: {BLUE_DIM}; color: {G900}; }}"
-            f"QHeaderView::section {{ background: {WHITE}; color: {G500};"
+            f"QHeaderView::section {{ background: transparent; color: {G500};"
             f" font-size: 12px; border: none;"
             f" border-bottom: 1px solid {G200}; padding: 8px 12px; }}"
-            f"QScrollBar:vertical {{ background: {WHITE}; width: 8px; }}"
+            f"QScrollBar:vertical {{ background: transparent; width: 8px; }}"
             f"QScrollBar::handle:vertical {{ background: {G200}; border-radius: 4px; }}"
         )
+        self._table.viewport().setStyleSheet("background: transparent;")
 
         self._footer = _FooterBar()
 
