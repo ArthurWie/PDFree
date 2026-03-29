@@ -4,6 +4,7 @@ import pytest
 sys.path.insert(0, ".")
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QHeaderView
 
 
@@ -216,3 +217,87 @@ def test_footer_unchecking_decrements(app):
     assert "1 row selected" in t._footer._left.text()  # verify increment happened first
     leaf.setCheckState(0, Qt.CheckState.Unchecked)
     assert "No rows selected" in t._footer._left.text()
+
+
+def test_depth0_folder_color_is_g800(app):
+    from styled_tree import StyledTree, _NodeData
+    from colors import G800
+
+    t = StyledTree()
+    t.populate([_NodeData(label="Root", is_folder=True, children=[])])
+    item = t._tree.topLevelItem(0)
+    assert item.foreground(2).color() == QColor(G800)
+
+
+def test_depth2_folder_color_is_orange_rust(app):
+    from styled_tree import StyledTree, _NodeData
+
+    t = StyledTree()
+    t.populate(
+        [
+            _NodeData(
+                label="Root",
+                is_folder=True,
+                children=[
+                    _NodeData(
+                        label="Child",
+                        is_folder=True,
+                        children=[
+                            _NodeData(label="Deep", is_folder=True, children=[]),
+                        ],
+                    ),
+                ],
+            )
+        ]
+    )
+    deep = t._tree.topLevelItem(0).child(0).child(0)
+    assert deep.foreground(2).color() == QColor("#C2410C")
+
+
+def test_roman_leaf_label_is_teal(app):
+    from styled_tree import StyledTree, _NodeData
+    from colors import TEAL
+
+    t = StyledTree()
+    t.populate(
+        [
+            _NodeData(
+                label="Root",
+                is_folder=True,
+                children=[
+                    _NodeData(label="file", is_folder=False, page=1, raw_label="iv"),
+                ],
+            )
+        ]
+    )
+    leaf = t._tree.topLevelItem(0).child(0)
+    assert leaf.foreground(2).color() == QColor(TEAL)
+
+
+def test_numeric_leaf_label_is_g700(app):
+    from styled_tree import StyledTree, _NodeData
+    from colors import G700
+
+    t = StyledTree()
+    t.populate(
+        [
+            _NodeData(
+                label="Root",
+                is_folder=True,
+                children=[
+                    _NodeData(label="file", is_folder=False, page=1, raw_label="5"),
+                ],
+            )
+        ]
+    )
+    leaf = t._tree.topLevelItem(0).child(0)
+    assert leaf.foreground(2).color() == QColor(G700)
+
+
+def test_folder_name_is_bold(app):
+    from styled_tree import StyledTree, _NodeData
+
+    t = StyledTree()
+    t.populate([_NodeData(label="Root", is_folder=True, children=[])])
+    item = t._tree.topLevelItem(0)
+    assert item.font(2).bold()
