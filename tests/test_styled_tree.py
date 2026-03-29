@@ -146,3 +146,72 @@ def test_leaf_col1_shows_page_number(app):
     )
     leaf = t._tree.topLevelItem(0).child(0)
     assert "7" in leaf.text(1)
+
+
+def test_footer_default_text(app):
+    from styled_tree import StyledTree
+
+    t = StyledTree()
+    assert "No rows selected" in t._footer._left.text()
+
+
+def test_footer_updates_on_leaf_check(app):
+    from styled_tree import StyledTree, _NodeData
+
+    t = StyledTree()
+    t.populate(
+        [
+            _NodeData(
+                label="Root",
+                is_folder=True,
+                children=[
+                    _NodeData(label="file.txt", is_folder=False, page=1, raw_label="1"),
+                ],
+            ),
+        ]
+    )
+    leaf = t._tree.topLevelItem(0).child(0)
+    leaf.setCheckState(0, Qt.CheckState.Checked)
+    assert "1 row selected" in t._footer._left.text()
+
+
+def test_footer_multi_count(app):
+    from styled_tree import StyledTree, _NodeData
+
+    t = StyledTree()
+    t.populate(
+        [
+            _NodeData(
+                label="Root",
+                is_folder=True,
+                children=[
+                    _NodeData(label="a.txt", is_folder=False, page=1, raw_label="1"),
+                    _NodeData(label="b.txt", is_folder=False, page=2, raw_label="2"),
+                ],
+            ),
+        ]
+    )
+    t._tree.topLevelItem(0).child(0).setCheckState(0, Qt.CheckState.Checked)
+    t._tree.topLevelItem(0).child(1).setCheckState(0, Qt.CheckState.Checked)
+    assert "2 rows selected" in t._footer._left.text()
+
+
+def test_footer_unchecking_decrements(app):
+    from styled_tree import StyledTree, _NodeData
+
+    t = StyledTree()
+    t.populate(
+        [
+            _NodeData(
+                label="Root",
+                is_folder=True,
+                children=[
+                    _NodeData(label="a.txt", is_folder=False, page=1, raw_label="1"),
+                ],
+            ),
+        ]
+    )
+    leaf = t._tree.topLevelItem(0).child(0)
+    leaf.setCheckState(0, Qt.CheckState.Checked)
+    leaf.setCheckState(0, Qt.CheckState.Unchecked)
+    assert "No rows selected" in t._footer._left.text()
