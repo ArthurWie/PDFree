@@ -6,6 +6,7 @@ header) inside a card-style container.
 
 Run standalone:  python styled_tree.py
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,8 +30,6 @@ from colors import (
     G50,
     G100,
     G200,
-    G400,
-    G500,
     G700,
     G800,
     G900,
@@ -47,7 +46,6 @@ _ROW_H = 36
 class _NodeData:
     label: str
     is_folder: bool
-    depth: int
     page: int | None = None
     raw_label: str = ""
     checked: bool = False
@@ -108,7 +106,9 @@ class StyledTree(QWidget):
         self._tree.setColumnCount(3)
         self._tree.header().hide()
         self._tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self._tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._tree.header().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
         self._tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self._tree.setColumnWidth(0, 40)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -179,11 +179,7 @@ class StyledTree(QWidget):
     def _style_item(self, item: QTreeWidgetItem, data: _NodeData, depth: int):
         pad = " " * (depth * 3)
         if data.is_folder:
-            folder_color = (
-                G800 if depth == 0
-                else G700 if depth == 1
-                else _ORANGE_RUST
-            )
+            folder_color = G800 if depth == 0 else G700 if depth == 1 else _ORANGE_RUST
             item.setForeground(2, QColor(folder_color))
             bold_font = QFont("Segoe UI", 13)
             bold_font.setBold(True)
@@ -241,34 +237,28 @@ if __name__ == "__main__":
             _NodeData(
                 label="Project",
                 is_folder=True,
-                depth=0,
                 children=[
                     _NodeData(
                         label="src",
                         is_folder=True,
-                        depth=1,
                         children=[
                             _NodeData(
                                 label="components",
                                 is_folder=True,
-                                depth=2,
                                 children=[
                                     _NodeData(
                                         label="ui",
                                         is_folder=True,
-                                        depth=3,
                                         children=[
                                             _NodeData(
                                                 label="button.tsx",
                                                 is_folder=False,
-                                                depth=4,
                                                 page=1,
                                                 raw_label="i",
                                             ),
                                             _NodeData(
                                                 label="tree.tsx",
                                                 is_folder=False,
-                                                depth=4,
                                                 page=2,
                                                 raw_label="2",
                                             ),
