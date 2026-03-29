@@ -1,10 +1,5 @@
 import pytest
-from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView
-
-import sys
-sys.path.insert(0, ".")
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QHeaderView
 
 @pytest.fixture(scope="module")
 def app():

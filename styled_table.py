@@ -7,13 +7,12 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QAbstractItemView,
     QLabel,
-    QApplication,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 
 from colors import (
-    WHITE, G100, G200, G500, G700, G800, G900,
+    WHITE, G200, G500, G700, G800, G900,
     BLUE_DIM, TEAL,
 )
 
@@ -143,16 +142,10 @@ class StyledTable(QWidget):
             self._update_footer()
 
     def _update_footer(self):
-        checked = sum(
-            1 for r in range(self._table.rowCount())
+        checked_rows = [
+            r for r in range(self._table.rowCount())
             if self._table.item(r, 0)
             and self._table.item(r, 0).checkState() == Qt.CheckState.Checked
-        )
-        self._footer.set_count(checked)
-        self.selection_changed.emit(
-            [
-                r for r in range(self._table.rowCount())
-                if self._table.item(r, 0)
-                and self._table.item(r, 0).checkState() == Qt.CheckState.Checked
-            ]
-        )
+        ]
+        self._footer.set_count(len(checked_rows))
+        self.selection_changed.emit(checked_rows)
