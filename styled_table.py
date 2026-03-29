@@ -1,3 +1,9 @@
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -7,6 +13,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QAbstractItemView,
     QLabel,
+    QPushButton,
+    QMenu,
     QApplication,
 )
 from PySide6.QtCore import Qt, Signal
@@ -16,13 +24,35 @@ from colors import (
     WHITE,
     G100,
     G200,
+    G300,
+    G400,
     G500,
+    G600,
     G700,
     G800,
     G900,
     BLUE_DIM,
     TEAL,
+    AMBER,
+    AMBER_BG,
 )
+
+
+def _fmt_size(b: int) -> str:
+    if b < 1024:
+        return f"{b} B"
+    if b < 1024**2:
+        return f"{b / 1024:.1f} KB"
+    return f"{b / 1024**2:.1f} MB"
+
+
+def _fmt_mtime(path: str) -> str:
+    try:
+        ts = os.path.getmtime(path)
+        dt = datetime.fromtimestamp(ts)
+        return dt.strftime("%b ") + str(dt.day) + dt.strftime(", %Y")
+    except OSError:
+        return "—"
 
 
 class _FooterBar(QWidget):
@@ -165,6 +195,195 @@ class StyledTable(QWidget):
         ]
         self._footer.set_count(len(checked_rows))
         self.selection_changed.emit(checked_rows)
+
+    def populate_library(self, entries: list[dict]):
+        self._entries = list(entries)
+
+        self._table.setColumnCount(6)
+        self._table.setHorizontalHeaderLabels(
+            ["", "Name", "Date Modified", "Size", "★", ""]
+        )
+        hh = self._table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self._table.setColumnWidth(0, 40)
+        self._table.setColumnWidth(2, 160)
+        self._table.setColumnWidth(3, 100)
+        self._table.setColumnWidth(4, 48)
+        self._table.setColumnWidth(5, 40)
+
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+
+        try:
+            self._table.cellClicked.disconnect()
+        except RuntimeError:
+            pass
+        try:
+            self._table.cellDoubleClicked.disconnect()
+        except RuntimeError:
+            pass
+        try:
+            self._table.itemChanged.disconnect(self._on_item_changed)
+        except RuntimeError:
+            pass
+
+        self._table.cellClicked.connect(self._on_library_cell_clicked)
+        self._table.cellDoubleClicked.connect(self._on_library_cell_double_clicked)
+
+        self._table.setRowCount(len(entries))
+
+        for i, entry in enumerate(entries):
+            self._table.setRowHeight(i, 48)
+            path = entry.get("path", "")
+            name = entry.get("name", Path(path).name if path else "")
+            size = entry.get("size", 0) or 0
+            fav = entry.get("favorited", False)
+
+            # Col 0: checkbox
+            chk = QTableWidgetItem()
+            chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            chk.setCheckState(Qt.CheckState.Unchecked)
+            chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(i, 0, chk)
+
+            # Col 1: name — bold
+            name_item = QTableWidgetItem(name)
+            name_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+            )
+            f = name_item.font()
+            f.setBold(True)
+            name_item.setFont(f)
+            name_item.setForeground(QColor(G800))
+            self._table.setItem(i, 1, name_item)
+
+            # Col 2: date modified
+            date_item = QTableWidgetItem(_fmt_mtime(path))
+            date_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+            )
+            date_item.setForeground(QColor(G600))
+            self._table.setItem(i, 2, date_item)
+
+            # Col 3: size — right-aligned
+            size_item = QTableWidgetItem(_fmt_size(size))
+            size_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
+            )
+            size_item.setForeground(QColor(G600))
+            self._table.setItem(i, 3, size_item)
+
+            # Col 4: star widget
+            star_btn = self._make_star_btn(path, fav)
+            star_wrap = QWidget()
+            star_wrap.setStyleSheet("background: transparent;")
+            star_lay = QHBoxLayout(star_wrap)
+            star_lay.setContentsMargins(0, 0, 0, 0)
+            star_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            star_lay.addWidget(star_btn)
+            self._table.setCellWidget(i, 4, star_wrap)
+
+            # Col 5: menu widget
+            menu_btn = self._make_menu_btn(path, star_btn)
+            menu_wrap = QWidget()
+            menu_wrap.setStyleSheet("background: transparent;")
+            menu_lay = QHBoxLayout(menu_wrap)
+            menu_lay.setContentsMargins(0, 0, 0, 0)
+            menu_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            menu_lay.addWidget(menu_btn)
+            self._table.setCellWidget(i, 5, menu_wrap)
+
+        self._update_footer()
+
+    def _make_star_btn(self, path: str, fav: bool) -> QPushButton:
+        btn = QPushButton("★" if fav else "☆")
+        btn.setFixedSize(28, 28)
+        self._apply_star_style(btn, fav)
+        btn.clicked.connect(lambda: self._on_star_clicked(btn, path))
+        return btn
+
+    def _apply_star_style(self, btn: QPushButton, fav: bool):
+        btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none;"
+            f" color: {AMBER if fav else G300}; font: 15px; }}"
+            f"QPushButton:hover {{ color: {AMBER}; background: {AMBER_BG};"
+            f" border-radius: 6px; }}"
+        )
+
+    def _on_star_clicked(self, btn: QPushButton, path: str):
+        new_fav = btn.text() != "★"
+        btn.setText("★" if new_fav else "☆")
+        self._apply_star_style(btn, new_fav)
+        self.toggle_fav.emit(path, new_fav)
+
+    def _make_menu_btn(self, path: str, star_btn: QPushButton) -> QPushButton:
+        btn = QPushButton("···")
+        btn.setFixedSize(28, 28)
+        btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none;"
+            f" color: {G400}; font: bold 14px; }}"
+            f"QPushButton:hover {{ background: {G100}; border-radius: 6px;"
+            f" color: {G600}; }}"
+        )
+        btn.clicked.connect(lambda: self._show_context_menu(btn, path, star_btn))
+        return btn
+
+    def _show_context_menu(self, anchor: QPushButton, path: str, star_btn: QPushButton):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {WHITE}; border: 1px solid {G200};"
+            f" border-radius: 8px; padding: 4px; }}"
+            f"QMenu::item {{ padding: 6px 20px; color: {G700};"
+            f" font-size: 13px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background: {G100}; }}"
+            f"QMenu::separator {{ background: {G200}; height: 1px;"
+            f" margin: 4px 10px; }}"
+        )
+        menu.addAction("Open", lambda: self.open_req.emit(path))
+        menu.addAction("Show in Explorer", lambda: self._show_in_explorer(path))
+        is_fav = star_btn.text() == "★"
+        fav_txt = "Remove from Favorites" if is_fav else "Add to Favorites"
+        menu.addAction(fav_txt, lambda: self._on_star_clicked(star_btn, path))
+        menu.addSeparator()
+        menu.addAction("Move to Trash", lambda: self.toggle_sel.emit(path, True))
+        pos = anchor.mapToGlobal(anchor.rect().bottomLeft())
+        menu.exec(pos)
+
+    def _show_in_explorer(self, path: str):
+        p = str(Path(path))
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", "/select,", p])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", p])
+        except OSError:
+            pass
+
+    def _on_library_cell_clicked(self, row: int, col: int):
+        if col != 0:
+            return
+        item = self._table.item(row, 0)
+        if item is None:
+            return
+        new_state = (
+            Qt.CheckState.Unchecked
+            if item.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+        item.setCheckState(new_state)
+        path = self._entries[row].get("path", "") if row < len(self._entries) else ""
+        self.toggle_sel.emit(path, new_state == Qt.CheckState.Checked)
+        self._update_footer()
+
+    def _on_library_cell_double_clicked(self, row: int, col: int):
+        if col in (0, 4, 5):
+            return
+        if row < len(self._entries):
+            self.open_req.emit(self._entries[row].get("path", ""))
 
 
 if __name__ == "__main__":
