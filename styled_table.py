@@ -7,18 +7,25 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QAbstractItemView,
     QLabel,
+    QApplication,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 
 from colors import (
-    WHITE, G200, G500, G700, G800, G900,
-    BLUE_DIM, TEAL,
+    WHITE,
+    G100,
+    G200,
+    G500,
+    G700,
+    G800,
+    G900,
+    BLUE_DIM,
+    TEAL,
 )
 
 
 class _FooterBar(QWidget):
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(40)
@@ -45,7 +52,6 @@ class _FooterBar(QWidget):
 
 
 class StyledTable(QWidget):
-
     selection_changed = Signal(list)
 
     def __init__(self, parent=None):
@@ -115,13 +121,17 @@ class StyledTable(QWidget):
             self._table.setRowHeight(i, 48)
 
             chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            chk_item.setFlags(
+                Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
+            )
             chk_item.setCheckState(Qt.CheckState.Unchecked)
             chk_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(i, 0, chk_item)
 
             page_item = QTableWidgetItem(str(page))
-            page_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            page_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+            )
             font = page_item.font()
             font.setBold(True)
             page_item.setFont(font)
@@ -129,7 +139,9 @@ class StyledTable(QWidget):
             self._table.setItem(i, 1, page_item)
 
             label_item = QTableWidgetItem(label)
-            label_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            label_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+            )
             is_roman = label and not label.isdigit() and label not in ("", "-")
             label_item.setForeground(QColor(TEAL if is_roman else G700))
             self._table.setItem(i, 2, label_item)
@@ -143,9 +155,43 @@ class StyledTable(QWidget):
 
     def _update_footer(self):
         checked_rows = [
-            r for r in range(self._table.rowCount())
+            r
+            for r in range(self._table.rowCount())
             if self._table.item(r, 0)
             and self._table.item(r, 0).checkState() == Qt.CheckState.Checked
         ]
         self._footer.set_count(len(checked_rows))
         self.selection_changed.emit(checked_rows)
+
+
+if __name__ == "__main__":
+    import sys
+
+    app = QApplication(sys.argv)
+
+    window = QWidget()
+    window.setWindowTitle("Styled Table Demo")
+    window.resize(700, 400)
+    window.setStyleSheet(f"background: {G100};")
+
+    layout = QVBoxLayout(window)
+    layout.setContentsMargins(32, 32, 32, 32)
+
+    table = StyledTable()
+    table.populate(
+        [
+            (1, "i"),
+            (2, "ii"),
+            (3, "iii"),
+            (4, "iv"),
+            (5, "1"),
+            (6, "2"),
+            (7, "3"),
+            (8, "A"),
+            (9, "B"),
+        ]
+    )
+    layout.addWidget(table)
+
+    window.show()
+    sys.exit(app.exec())
