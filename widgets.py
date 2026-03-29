@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from colors import G100, G400
+from colors import BLUE_DIM, G100, G200, G400, G700, G900, WHITE
 
 
 class PreviewCanvas(QWidget):
@@ -56,3 +56,32 @@ class PreviewCanvas(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
         p.drawPixmap(x, y, scaled)
+
+
+def card_wrap(widget, parent=None):
+    from PySide6.QtWidgets import QVBoxLayout
+
+    container = QWidget(parent)
+    container.setObjectName("cardWrap")
+    container.setStyleSheet(
+        "#cardWrap { background: " + WHITE + "; border: 1px solid " + G200 + ";"
+        " border-radius: 8px; }"
+    )
+    layout = QVBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+
+    widget.setStyleSheet(
+        "QTreeWidget, QTableWidget { border: none; background: " + WHITE + ";"
+        " alternate-background-color: " + G100 + "; font: 13px; }"
+        "QTreeWidget::item, QTableWidget::item { padding: 4px 8px; color: "
+        + G900
+        + "; }"
+        "QTreeWidget::item:selected, QTableWidget::item:selected"
+        " { background: " + BLUE_DIM + "; color: " + G900 + "; }"
+        "QHeaderView::section { background: " + G100 + "; color: " + G700 + ";"
+        " font: bold 11px; padding: 6px 8px; border: none;"
+        " border-bottom: 1px solid " + G200 + "; }"
+    )
+    layout.addWidget(widget)
+    return container
