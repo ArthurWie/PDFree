@@ -213,5 +213,6 @@ def test_footer_unchecking_decrements(app):
     )
     leaf = t._tree.topLevelItem(0).child(0)
     leaf.setCheckState(0, Qt.CheckState.Checked)
+    assert "1 row selected" in t._footer._left.text()  # verify increment happened first
     leaf.setCheckState(0, Qt.CheckState.Unchecked)
     assert "No rows selected" in t._footer._left.text()
