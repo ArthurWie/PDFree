@@ -38,7 +38,6 @@ from colors import (
 )
 
 _ORANGE_RUST = "#C2410C"
-_INDENT = 20  # px per depth level
 _ROW_H = 36
 
 
@@ -213,7 +212,7 @@ class StyledTree(QWidget):
     def _collect_checked(self, item: QTreeWidgetItem, result: list):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data and not data.is_folder:
-            if item.checkState(0) == Qt.CheckState.Checked:
+            if item.checkState(0) == Qt.CheckState.Checked and data.page is not None:
                 result.append(data.page)
         for i in range(item.childCount()):
             self._collect_checked(item.child(i), result)

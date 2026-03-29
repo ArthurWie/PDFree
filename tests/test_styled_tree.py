@@ -301,3 +301,24 @@ def test_folder_name_is_bold(app):
     t.populate([_NodeData(label="Root", is_folder=True, children=[])])
     item = t._tree.topLevelItem(0)
     assert item.font(2).bold()
+
+
+def test_selection_changed_emits_page_numbers(app):
+    from styled_tree import StyledTree, _NodeData
+
+    emitted = []
+    t = StyledTree()
+    t.selection_changed.connect(emitted.append)
+    t.populate(
+        [
+            _NodeData(
+                label="Root",
+                is_folder=True,
+                children=[
+                    _NodeData(label="file.txt", is_folder=False, page=3, raw_label="3"),
+                ],
+            ),
+        ]
+    )
+    t._tree.topLevelItem(0).child(0).setCheckState(0, Qt.CheckState.Checked)
+    assert emitted and emitted[-1] == [3]
