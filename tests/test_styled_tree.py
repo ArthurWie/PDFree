@@ -3,6 +3,7 @@ import pytest
 
 sys.path.insert(0, ".")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QHeaderView
 
 
@@ -61,9 +62,6 @@ def test_col2_stretch(app):
     t = StyledTree()
     mode = t._tree.header().sectionResizeMode(2)
     assert mode == QHeaderView.ResizeMode.Stretch
-
-
-from PySide6.QtCore import Qt
 
 
 def test_populate_adds_top_level_items(app):

@@ -88,6 +88,7 @@ class StyledTree(QWidget):
         self._build_ui()
 
     def _build_ui(self):
+        self._item_changed_connected = False
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -138,15 +139,14 @@ class StyledTree(QWidget):
 
     def populate(self, nodes: list[_NodeData]):
         """Populate tree from a list of root-level _NodeData (children nested inside)."""
-        try:
+        if self._item_changed_connected:
             self._tree.itemChanged.disconnect(self._on_item_changed)
-        except RuntimeError:
-            pass
         self._tree.clear()
         for node in nodes:
             self._add_node(node, parent=None, depth=0)
         self._tree.expandAll()
         self._tree.itemChanged.connect(self._on_item_changed)
+        self._item_changed_connected = True
         self._update_footer()
 
     def _add_node(self, data: _NodeData, parent, depth: int):
@@ -156,9 +156,7 @@ class StyledTree(QWidget):
         if data.is_folder:
             item.setText(0, "")
             item.setText(1, "")
-            item.setFlags(
-                item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
-            )
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
         else:
             chk = Qt.CheckState.Checked if data.checked else Qt.CheckState.Unchecked
             item.setCheckState(0, chk)
