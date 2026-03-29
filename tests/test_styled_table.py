@@ -119,3 +119,21 @@ def test_footer_updates_on_check(app):
     t.populate([(1, "1"), (2, "2")])
     t._table.item(0, 0).setCheckState(Qt.CheckState.Checked)
     assert "1 row selected" in t._footer._left.text()
+
+
+def test_open_req_signal_exists(app):
+    from styled_table import StyledTable
+    t = StyledTable()
+    assert hasattr(t, "open_req")
+
+
+def test_toggle_sel_signal_exists(app):
+    from styled_table import StyledTable
+    t = StyledTable()
+    assert hasattr(t, "toggle_sel")
+
+
+def test_toggle_fav_signal_exists(app):
+    from styled_table import StyledTable
+    t = StyledTable()
+    assert hasattr(t, "toggle_fav")

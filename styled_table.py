@@ -53,6 +53,9 @@ class _FooterBar(QWidget):
 
 class StyledTable(QWidget):
     selection_changed = Signal(list)
+    open_req = Signal(str)
+    toggle_sel = Signal(str, bool)
+    toggle_fav = Signal(str, bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
