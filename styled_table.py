@@ -129,7 +129,7 @@ class StyledTable(QWidget):
             f"QTableWidget {{ border: none; background: transparent; outline: none; }}"
             f"QTableWidget::item {{ padding: 0 12px; color: {G900}; }}"
             f"QTableWidget::item:selected {{ background: {BLUE_DIM}; color: {G900}; }}"
-            f"QHeaderView::section {{ background: transparent; color: {G500};"
+            f"QHeaderView::section {{ background: {G100}; color: {G500};"
             f" font-size: 12px; border: none;"
             f" border-bottom: 1px solid {G200}; padding: 8px 12px; }}"
             f"QScrollBar:vertical {{ background: transparent; width: 8px; }}"
