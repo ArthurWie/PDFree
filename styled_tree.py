@@ -156,6 +156,9 @@ class StyledTree(QWidget):
         if data.is_folder:
             item.setText(0, "")
             item.setText(1, "")
+            item.setFlags(
+                item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
+            )
         else:
             chk = Qt.CheckState.Checked if data.checked else Qt.CheckState.Unchecked
             item.setCheckState(0, chk)
