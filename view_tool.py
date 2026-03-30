@@ -1963,8 +1963,8 @@ class ViewTool(QWidget):
         self._search_entry.setFixedSize(250, 30)
         self._search_entry.setPlaceholderText("Search\u2026")
         self._search_entry.setStyleSheet(
-            f"QLineEdit {{ background: {WHITE}; border: 1.5px solid {G300}; "
-            f"border-radius: 8px; color: {G900}; font: 12px 'Segoe UI'; padding: 0 6px; }}"
+            f"QLineEdit {{ background: {WHITE}; border: 1px solid {G300}; "
+            f"border-radius: 5px; color: {G900}; font: 12px 'Segoe UI'; padding: 0 6px; }}"
         )
         self._search_entry.returnPressed.connect(self._do_search)
         sb2.addWidget(self._search_entry)
