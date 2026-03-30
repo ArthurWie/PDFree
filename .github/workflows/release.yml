@@ -161,7 +161,22 @@ jobs:
           pip install pyinstaller
 
       - name: Generate LOGO.png
-        run: python -c "import cairosvg; cairosvg.svg2png(url='LOGO.svg', write_to='LOGO.png', output_width=256, output_height=256)"
+        run: |
+          python -c "
+          import sys
+          from PySide6.QtWidgets import QApplication
+          from PySide6.QtSvgWidgets import QSvgWidget
+          from PySide6.QtSvg import QSvgRenderer
+          from PySide6.QtGui import QImage, QPainter
+          app = QApplication.instance() or QApplication(sys.argv)
+          renderer = QSvgRenderer('LOGO.svg')
+          img = QImage(256, 256, QImage.Format.Format_ARGB32)
+          img.fill(0)
+          p = QPainter(img)
+          renderer.render(p)
+          p.end()
+          img.save('LOGO.png')
+          "
 
       - name: Build PDFree.exe
         run: pyinstaller PDFree.spec --noconfirm
