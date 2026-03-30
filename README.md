@@ -6,13 +6,39 @@ A free, open-source PDF toolbox desktop application built with Python and PySide
 
 ## Features
 
-- **View PDF** — Full-featured viewer with zoom, rotation, text selection, search (Ctrl+F), thumbnails, TOC sidebar, annotations, signature drawing, and form filling
+### View & Annotate
+- **View PDF** — Full-featured viewer with zoom, rotation, two-up page mode, text selection, full-text search (Ctrl+F) with regex and match count, thumbnails, TOC sidebar, clickable links, reading position memory, split view, and multi-document tabs
+- **Annotate** — Highlight, underline, strikethrough, freehand draw, shapes, arrows, sticky notes, stamps, signatures, eraser, measurement tool, and text boxes with inline editing
+- **Fill Forms** — Fill AcroForm fields (text, checkbox, combobox, radio button, list box); undo/redo per document
+
+### Organize
 - **Excerpt Tool** — Load multiple PDFs, drag to select rectangular regions from any page, and collect them into a new PDF
 - **Split** — Split a PDF by page ranges, every N pages, or bookmarks
-- **File Library** — Persistent library of your PDFs with folders, favorites, and recent files
-- **PDF to CSV** — Extract tables from PDFs into CSV files
+- **Merge** — Combine multiple PDFs into one, reorder pages
+- **Crop** — Crop pages to a selected region
+- **Rotate** — Rotate individual pages or all pages
+- **Watermark** — Stamp text or image watermarks
+- **Compress** — Reduce file size (lossless and lossy modes)
+- **Bookmarks** — Add, remove, rename, reorder, and re-level TOC entries
+- **Page Labels** — Custom page numbering ranges (Roman, Arabic, prefix)
 
-More tools (merge, crop, watermark, password, OCR, etc.) are shown in the UI and will be added in future releases.
+### Convert
+- **PDF to CSV** — Extract tables from PDFs into CSV files
+- **SVG to PDF** — Convert SVG files to PDF
+
+### Sign & Security
+- **Sign** — Cryptographic PDF signing with PKCS#12 certificates via pyhanko; optional RFC 3161 timestamping
+- **Validate Signature** — Validate all embedded digital signatures; reports trust, integrity, signer DN, signing time
+- **Redact** — Manual bounding-box redaction and text/regex find-and-redact; permanent removal via `apply_redactions()`
+- **Add Password** — AES-256/128/RC4 encryption with 8 permission flags; edit permissions on already-encrypted PDFs
+- **Form Export** — Export all AcroForm field names, types, and values to JSON, CSV, or XLSX
+- **Form Unlock** — Clear ReadOnly bit on all AcroForm fields
+
+### Other
+- **PDF/A** — Convert to PDF/A-1b, -2b, or -3b; optional VeraPDF validation
+- **Font Info** — List every font per page (name, type, encoding, embedded, subset); export to JSON/CSV
+- **File Library** — Persistent library of your PDFs with folders, favorites, recent files, and last-read position
+- **Dark / Light theme** — Toggle at runtime; preference persisted across sessions
 
 ## Installation
 
@@ -59,7 +85,7 @@ More tools (merge, crop, watermark, password, OCR, etc.) are shown in the UI and
 
 ### Option 2 — Run from source (Windows, macOS, Linux)
 
-**Requirements:** Python 3.8 or newer · Tested on Windows and macOS · Linux should work but is untested
+**Requirements:** Python 3.11 or newer
 
 ```bash
 # 1. Clone the repository
@@ -68,6 +94,7 @@ cd PDFree
 ```
 
 **Windows**
+```bash
 # 2. Create and activate a virtual environment
 python -m venv .venv
 .venv\Scripts\activate
@@ -76,36 +103,9 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-**macOS — quick setup (Python 3.8+ already installed)**
+**macOS / Linux**
 ```bash
 # 2. Create and activate a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-```
-
-**macOS / Linux — with Homebrew**
-```bash
-# 2. Install Python 3.11
-brew install python@3.11
-
-# 3. Create a virtual environment with Python 3.11
-python3.11 -m venv .venv
-source .venv/bin/activate
-
-# 4. Install dependencies
-pip install -r requirements.txt
-```
-
-**macOS — without Homebrew**
-
-1. Download and install Python 3.11 from the official website: https://www.python.org/downloads/
-2. Open Terminal and run:
-
-```bash
-# 2. Create a virtual environment with Python 3.11
 python3.11 -m venv .venv
 source .venv/bin/activate
 
@@ -119,20 +119,58 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Development
+
+Install dev dependencies (includes pytest, ruff, bandit):
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+Run tests:
+
+```bash
+pytest tests/
+```
+
+Lint and format:
+
+```bash
+ruff check .
+ruff format .
+```
+
 ## Project structure
 
 ```
-main.py            # Entry point and home screen
-view_tool.py       # PDF viewer
-excerpt_tool.py    # Excerpt / region-capture tool
-split_tool.py      # Split tool
-pdf_to_csv_tool.py # Table extraction to CSV
-library_page.py    # File library / dashboard
-icons.py           # Bundled Lucide SVG icon set
-colors.py          # Shared design-system colour palette
-utils.py           # Shared Qt utilities
+main.py                  # Entry point, home screen, tool router
+view_tool.py             # PDF viewer, annotations, forms
+excerpt_tool.py          # Region-capture tool
+split_tool.py            # Split tool
+pdf_to_csv_tool.py       # Table extraction to CSV
+library_page.py          # File library
+sign_tool.py             # Cryptographic signing
+validate_signature_tool.py  # Signature validation
+redact_tool.py           # Redaction
+add_password_tool.py     # Encryption and permissions
+form_export_tool.py      # AcroForm export
+form_unlock_tool.py      # AcroForm unlock
+bookmarks_tool.py        # TOC / bookmark editor
+page_labels_tool.py      # Custom page numbering
+pdfa_tool.py             # PDF/A conversion
+font_info_tool.py        # Font inspector
+svg_to_pdf_tool.py       # SVG to PDF conversion
+updater.py               # Background update checker
+theme.py                 # Dark/light theme
+i18n.py                  # Internationalisation
+icons.py                 # Bundled Lucide SVG icon set
+colors.py                # Shared design-system colour palette
+utils.py                 # Shared Qt utilities
+version.py               # App version and GitHub repo constants
 ```
 
 ## License
 
 [MIT](LICENSE)
+
+> **Note on PyMuPDF:** PDFree uses PyMuPDF (fitz), which is licensed under the GNU AGPL v3. Commercial distribution of software that links PyMuPDF requires an [Artifex commercial license](https://mupdf.com/licensing/). See [NOTICE](NOTICE) for full third-party license details.
