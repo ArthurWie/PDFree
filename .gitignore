@@ -20,6 +20,7 @@ pyrightconfig.json
 
 # Claude Code session data
 .claude/
+.superpowers/
 
 # Dev / prototype files (not part of the app)
 write_table.py
