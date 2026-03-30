@@ -23,18 +23,17 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QSpinBox,
-    QTreeWidget,
     QTreeWidgetItem,
     QAbstractItemView,
     QHeaderView,
 )
+from styled_tree import StyledTree
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
 from colors import (
     BLUE,
     BLUE_HOVER,
-    BLUE_DIM,
     GREEN,
     GREEN_HOVER,
     G100,
@@ -451,26 +450,18 @@ class BookmarksTool(QWidget):
         v.addWidget(toolbar)
 
         # Tree widget
-        self._tree = QTreeWidget()
+        self._styled_tree = StyledTree()
+        self._tree = self._styled_tree._tree
         self._tree.setColumnCount(2)
-        self._tree.setHeaderLabels(["Title", "Page"])
         self._tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._tree.header().setSectionResizeMode(
             1, QHeaderView.ResizeMode.ResizeToContents
         )
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree.setAlternatingRowColors(True)
         self._tree.setIndentation(20)
-        self._tree.setStyleSheet(
-            f"QTreeWidget {{ border: none; background: {WHITE}; }}"
-            f"QTreeWidget::item {{ padding: 4px 4px; color: {G900}; }}"
-            f"QTreeWidget::item:selected {{ background: {BLUE_DIM}; color: {G900}; }}"
-            f"QHeaderView::section {{ background: {G100}; color: {G700}; font: bold 12px;"
-            f" border: none; border-bottom: 1px solid {G200}; padding: 6px 8px; }}"
-        )
         self._tree.currentItemChanged.connect(self._on_selection_changed)
-        v.addWidget(self._tree, 1)
+        v.addWidget(self._styled_tree, 1)
 
         self._empty_lbl = QLabel("Load a PDF to view and edit its bookmarks.")
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
