@@ -3958,6 +3958,17 @@ class ViewTool(QWidget):
         elif self._tool in (Tool.RECT, Tool.CIRCLE, Tool.LINE, Tool.ARROW):
             self._canvas.update()
 
+        elif self._tool == Tool.ERASER:
+            click_pt = fitz.Point(px, py)
+            page = self.doc[self.current_page]
+            for annot in list(page.annots()):
+                if annot.rect.contains(click_pt):
+                    self._push_undo()
+                    page.delete_annot(annot)
+                    self._modified = True
+                    self._show_page(self.current_page)
+                    break
+
     def _on_mouse_up(self, cx: float, cy: float):
         # EXCERTER uses its own rubber-band state — handle before the _drag_start guard
         if self._tool == Tool.EXCERTER:

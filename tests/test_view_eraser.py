@@ -70,3 +70,43 @@ def test_eraser_click_empty_area_does_nothing(qapp, pdf_with_rect_annot):
     page = vt.doc[0]
     assert len(list(page.annots())) == 1
     vt.cleanup()
+
+
+@pytest.fixture
+def pdf_with_two_annots(tmp_path):
+    """PDF with two rect annotations at known non-overlapping positions."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=200)
+    a1 = page.add_rect_annot(fitz.Rect(10, 10, 60, 60))
+    a1.update()
+    a2 = page.add_rect_annot(fitz.Rect(200, 10, 250, 60))
+    a2.update()
+    p = tmp_path / "two_annots.pdf"
+    doc.save(str(p))
+    doc.close()
+    return str(p)
+
+
+def test_eraser_drag_deletes_swept_annotations(qapp, pdf_with_two_annots):
+    from view_tool import Tool
+    from PySide6.QtWidgets import QApplication
+    vt = _open_and_render(qapp, pdf_with_two_annots)
+    page = vt.doc[0]
+    assert len(list(page.annots())) == 2
+
+    vt._set_tool(Tool.ERASER)
+
+    # Simulate mouse-down at first annotation center (PDF 35, 35)
+    cx1, cy1 = vt._pdf_to_canvas(35.0, 35.0)
+    vt._on_mouse_down(cx1, cy1)
+    QApplication.processEvents()
+
+    # Simulate mouse-move to second annotation center (PDF 225, 35)
+    cx2, cy2 = vt._pdf_to_canvas(225.0, 35.0)
+    vt._on_mouse_move(cx2, cy2)
+    QApplication.processEvents()
+
+    page = vt.doc[0]
+    assert len(list(page.annots())) == 0
+    vt.cleanup()
