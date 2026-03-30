@@ -1033,9 +1033,7 @@ class PDFreeApp(QMainWindow):
         """Top header: search bar + Upload New + notification + avatar."""
         bar = QFrame()
         bar.setFixedHeight(64)
-        bar.setStyleSheet(
-            f"QFrame {{ background: {colors.WHITE}; border: none; }}"
-        )
+        bar.setStyleSheet(f"QFrame {{ background: {colors.WHITE}; border: none; }}")
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(32, 0, 32, 0)
         lay.setSpacing(0)
@@ -1119,9 +1117,7 @@ class PDFreeApp(QMainWindow):
 
         # Logo header
         logo_wrap = QFrame()
-        logo_wrap.setStyleSheet(
-            f"QFrame {{ background: transparent; border: none; }}"
-        )
+        logo_wrap.setStyleSheet(f"QFrame {{ background: transparent; border: none; }}")
         lw_lay = QHBoxLayout(logo_wrap)
         lw_lay.setContentsMargins(16, 16, 16, 16)
         lw_lay.setSpacing(0)
@@ -3087,8 +3083,7 @@ if __name__ == "__main__":
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
     argv_paths = [
-        p for p in sys.argv[1:]
-        if p.lower().endswith(".pdf") and os.path.isfile(p)
+        p for p in sys.argv[1:] if p.lower().endswith(".pdf") and os.path.isfile(p)
     ]
 
     app = QApplication(sys.argv)
@@ -3109,7 +3104,9 @@ if __name__ == "__main__":
     QLocalServer.removeServer("PDFree")
     _server = QLocalServer()
     if not _server.listen("PDFree"):
-        logger.warning("single-instance server could not bind: %s", _server.errorString())
+        logger.warning(
+            "single-instance server could not bind: %s", _server.errorString()
+        )
 
     _install_crash_reporter(app)
     _install_translator(app)
@@ -3133,7 +3130,8 @@ if __name__ == "__main__":
         raw = conn.readAll().data().decode(errors="ignore")
         conn.close()
         paths = [
-            p for p in raw.split("\n")
+            p
+            for p in raw.split("\n")
             if p and p.lower().endswith(".pdf") and os.path.isfile(p)
         ]
         if paths:

@@ -188,6 +188,7 @@ def _sample_entries(tmp_path):
 
 def test_library_column_count(app, tmp_path):
     from styled_table import StyledTable
+
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
     assert t._table.columnCount() == 5
@@ -195,6 +196,7 @@ def test_library_column_count(app, tmp_path):
 
 def test_library_row_count(app, tmp_path):
     from styled_table import StyledTable
+
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
     assert t._table.rowCount() == 2
@@ -202,6 +204,7 @@ def test_library_row_count(app, tmp_path):
 
 def test_library_name_bold(app, tmp_path):
     from styled_table import StyledTable
+
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
     assert t._table.item(0, 1).font().bold()
@@ -209,6 +212,7 @@ def test_library_name_bold(app, tmp_path):
 
 def test_library_date_missing_file(app, tmp_path):
     from styled_table import StyledTable
+
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
     assert t._table.item(1, 2).text() == "—"
@@ -216,6 +220,7 @@ def test_library_date_missing_file(app, tmp_path):
 
 def test_library_size_formatted(app, tmp_path):
     from styled_table import StyledTable
+
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
     assert t._table.item(0, 3).text() == "1.5 KB"
@@ -224,6 +229,7 @@ def test_library_size_formatted(app, tmp_path):
 def test_library_menu_widget_present(app, tmp_path):
     from styled_table import StyledTable
     from PySide6.QtWidgets import QPushButton
+
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
     w = t._table.cellWidget(0, 4)
@@ -235,6 +241,7 @@ def test_library_menu_widget_present(app, tmp_path):
 def test_checkbox_toggles_on_cell_click(app, tmp_path):
     from styled_table import StyledTable
     from PySide6.QtCore import Qt
+
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
     t._on_library_cell_clicked(0, 0)
@@ -243,6 +250,7 @@ def test_checkbox_toggles_on_cell_click(app, tmp_path):
 
 def test_toggle_sel_signal_emitted(app, tmp_path):
     from styled_table import StyledTable
+
     received = []
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
@@ -254,6 +262,7 @@ def test_toggle_sel_signal_emitted(app, tmp_path):
 
 def test_toggle_fav_signal_emitted(app, tmp_path):
     from styled_table import StyledTable
+
     received = []
     t = StyledTable()
     entries = _sample_entries(tmp_path)

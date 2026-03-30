@@ -199,9 +199,7 @@ class StyledTable(QWidget):
         self._entries = list(entries)
 
         self._table.setColumnCount(5)
-        self._table.setHorizontalHeaderLabels(
-            ["", "Name", "Date Modified", "Size", ""]
-        )
+        self._table.setHorizontalHeaderLabels(["", "Name", "Date Modified", "Size", ""])
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
