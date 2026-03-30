@@ -1,0 +1,65 @@
+PDFree — Third-Party Software Notices
+
+This product includes or depends on the following third-party libraries.
+Each library's license governs your use of that library.
+
+---
+
+PyMuPDF (fitz)
+  License: GNU Affero General Public License v3.0 (AGPL-3.0)
+  Source:  https://github.com/pymupdf/PyMuPDF
+  Note:    Commercial distribution of software linking PyMuPDF requires
+           an Artifex commercial license. See https://mupdf.com/licensing/
+
+MuPDF (bundled with PyMuPDF)
+  License: GNU Affero General Public License v3.0 (AGPL-3.0)
+  Source:  https://mupdf.com/
+
+PySide6 / Qt
+  License: GNU Lesser General Public License v3.0 (LGPL-3.0)
+  Source:  https://www.qt.io/
+
+pypdf
+  License: BSD 3-Clause
+  Source:  https://github.com/py-pdf/pypdf
+
+pdfplumber
+  License: MIT
+  Source:  https://github.com/jsvine/pdfplumber
+
+pyhanko
+  License: MIT
+  Source:  https://github.com/MatthiasValvekens/pyHanko
+
+ocrmypdf
+  License: Mozilla Public License 2.0 (MPL-2.0)
+  Source:  https://github.com/ocrmypdf/OCRmyPDF
+
+Pillow
+  License: Historical Permission Notice and Disclaimer (HPND)
+  Source:  https://github.com/python-pillow/Pillow
+
+openpyxl
+  License: MIT
+  Source:  https://openpyxl.readthedocs.io/
+
+python-docx
+  License: MIT
+  Source:  https://github.com/python-openxmlformats/python-docx
+
+cairosvg (optional)
+  License: GNU Lesser General Public License v3.0 (LGPL-3.0)
+  Source:  https://github.com/Kozea/CairoSVG
+
+---
+
+The PDFree application itself is distributed under the MIT License.
+See the LICENSE file in this repository for the full text.
+
+IMPORTANT — AGPL NOTICE:
+If you distribute PDFree (or any derivative) to third parties and it
+links against PyMuPDF/MuPDF at runtime, AGPL-3.0 applies to the combined
+work. You must either:
+  (a) distribute the complete corresponding source code under AGPL-3.0, or
+  (b) obtain an Artifex commercial license for MuPDF.
+See https://mupdf.com/licensing/ for details.
