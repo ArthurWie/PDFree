@@ -4377,6 +4377,7 @@ class ViewTool(QWidget):
 
         if existing_annot is not None:
             old_rect = existing_annot
+            # Assumes no two FREE_TEXT annotations share an identical rect on this page.
             annot_to_delete = next(
                 (a for a in page.annots() if fitz.Rect(a.rect) == old_rect),
                 None,

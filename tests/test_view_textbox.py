@@ -219,3 +219,26 @@ def test_commit_empty_new_textbox_discards(qapp, empty_pdf):
     page = vt.doc[0]
     assert len(list(page.annots())) == 0
     vt.cleanup()
+
+
+def test_commit_existing_textbox_with_empty_text_deletes_annotation(qapp, pdf_with_freetext):
+    from PySide6.QtWidgets import QApplication
+    vt = _open_and_render(qapp, pdf_with_freetext)
+    page = vt.doc[0]
+    assert len(list(page.annots())) == 1
+
+    # Open editor on existing annotation
+    cx, cy = vt._pdf_to_canvas(125.0, 65.0)
+    vt._on_double_click(cx, cy)
+    QApplication.processEvents()
+
+    # Clear text and commit
+    vt._canvas._tb_editor.setPlainText("")
+    vt._commit_tb_editor()
+    QApplication.processEvents()
+    QApplication.processEvents()
+
+    page = vt.doc[0]
+    assert len(list(page.annots())) == 0
+    assert vt._modified
+    vt.cleanup()
