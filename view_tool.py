@@ -442,7 +442,7 @@ class _DragHandle(QLabel):
         super().__init__("⠿ drag", canvas)
         self._canvas = canvas
         self._drag_active = False
-        self._drag_origin = None      # (canvas_x, canvas_y) at press
+        self._drag_origin = None  # (canvas_x, canvas_y) at press
         self._annot_orig_rect = None  # fitz.Rect at press
         self.setStyleSheet(
             "QLabel { background: #1e3a5f; color: #93c5fd; border-radius: 3px; "
@@ -492,8 +492,10 @@ class _DragHandle(QLabel):
                 dpy = end_py - orig_py
                 r = self._annot_orig_rect
                 new_rect = fitz.Rect(
-                    r.x0 + dpx, r.y0 + dpy,
-                    r.x1 + dpx, r.y1 + dpy,
+                    r.x0 + dpx,
+                    r.y0 + dpy,
+                    r.x1 + dpx,
+                    r.y1 + dpy,
                 )
                 annot.set_rect(new_rect)
                 annot.update()
@@ -4341,7 +4343,9 @@ class ViewTool(QWidget):
             old_text = ""
 
         editor.setFixedSize(w, h)
-        canvas._tb_editing_annot = fitz.Rect(existing_annot.rect) if existing_annot is not None else None
+        canvas._tb_editing_annot = (
+            fitz.Rect(existing_annot.rect) if existing_annot is not None else None
+        )
         canvas._tb_editor_pdf_origin = (pdf_x, pdf_y)
         editor.setPlainText(old_text)
         editor.show()
@@ -4386,26 +4390,38 @@ class ViewTool(QWidget):
                 page.delete_annot(annot_to_delete)
             if text:
                 lines = text.split("\n")
-                width = max(old_rect.width, max(len(l) for l in lines) * fontsize * 0.6)
+                width = max(
+                    old_rect.width, max(len(line) for line in lines) * fontsize * 0.6
+                )
                 height = max(old_rect.height, len(lines) * fontsize * 1.4 + fontsize)
                 rect = fitz.Rect(
-                    old_rect.x0, old_rect.y0,
-                    old_rect.x0 + width, old_rect.y0 + height,
+                    old_rect.x0,
+                    old_rect.y0,
+                    old_rect.x0 + width,
+                    old_rect.y0 + height,
                 )
                 annot = page.add_freetext_annot(
-                    rect, text, fontsize=fontsize,
-                    text_color=fitz_rgb, fontname="helv", fill_color=None,
+                    rect,
+                    text,
+                    fontsize=fontsize,
+                    text_color=fitz_rgb,
+                    fontname="helv",
+                    fill_color=None,
                 )
                 annot.update()
         else:
             if text:
                 lines = text.split("\n")
-                width = max(100, max(len(l) for l in lines) * fontsize * 0.6)
+                width = max(100, max(len(line) for line in lines) * fontsize * 0.6)
                 height = len(lines) * fontsize * 1.4 + fontsize
                 rect = fitz.Rect(pdf_x, pdf_y, pdf_x + width, pdf_y + height)
                 annot = page.add_freetext_annot(
-                    rect, text, fontsize=fontsize,
-                    text_color=fitz_rgb, fontname="helv", fill_color=None,
+                    rect,
+                    text,
+                    fontsize=fontsize,
+                    text_color=fitz_rgb,
+                    fontname="helv",
+                    fill_color=None,
                 )
                 annot.update()
 

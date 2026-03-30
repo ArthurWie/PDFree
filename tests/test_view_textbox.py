@@ -6,6 +6,7 @@ import pytest
 
 def _get_or_create_app():
     from PySide6.QtWidgets import QApplication
+
     return QApplication.instance() or QApplication(sys.argv)
 
 
@@ -18,6 +19,7 @@ def qapp():
 def pdf_with_freetext(tmp_path):
     """PDF with a FREE_TEXT annotation at a known position."""
     import fitz
+
     doc = fitz.open()
     page = doc.new_page(width=400, height=400)
     annot = page.add_freetext_annot(
@@ -35,6 +37,7 @@ def pdf_with_freetext(tmp_path):
 def _open_and_render(qapp, pdf_path):
     from view_tool import ViewTool
     from PySide6.QtWidgets import QApplication
+
     vt = ViewTool()
     vt.show()
     vt.open_file(pdf_path)
@@ -51,6 +54,7 @@ def test_tb_handle_exists_on_canvas(qapp, pdf_with_freetext):
 
 def test_tb_handle_visible_when_hovering_freetext(qapp, pdf_with_freetext):
     from PySide6.QtWidgets import QApplication
+
     vt = _open_and_render(qapp, pdf_with_freetext)
     # Hover over center of annotation (PDF coords 125, 65)
     cx, cy = vt._pdf_to_canvas(125.0, 65.0)
@@ -62,6 +66,7 @@ def test_tb_handle_visible_when_hovering_freetext(qapp, pdf_with_freetext):
 
 def test_tb_handle_hidden_when_not_hovering(qapp, pdf_with_freetext):
     from PySide6.QtWidgets import QApplication
+
     vt = _open_and_render(qapp, pdf_with_freetext)
     # Move to an empty area (PDF coords 300, 300)
     cx, cy = vt._pdf_to_canvas(300.0, 300.0)
@@ -137,6 +142,7 @@ def test_drag_handle_moves_freetext_annotation(qapp, pdf_with_freetext):
 @pytest.fixture
 def empty_pdf(tmp_path):
     import fitz
+
     doc = fitz.open()
     doc.new_page(width=400, height=400)
     p = tmp_path / "empty.pdf"
@@ -154,6 +160,7 @@ def test_tb_editor_exists_on_canvas(qapp, empty_pdf):
 def test_clicking_with_textbox_tool_opens_inline_editor(qapp, empty_pdf):
     from view_tool import Tool
     from PySide6.QtWidgets import QApplication
+
     vt = _open_and_render(qapp, empty_pdf)
     vt._set_tool(Tool.TEXT_BOX)
     # Click on empty area (PDF coords 100, 100)
@@ -167,6 +174,7 @@ def test_clicking_with_textbox_tool_opens_inline_editor(qapp, empty_pdf):
 
 def test_double_click_freetext_opens_editor_with_existing_text(qapp, pdf_with_freetext):
     from PySide6.QtWidgets import QApplication
+
     vt = _open_and_render(qapp, pdf_with_freetext)
     # Double-click at annotation center (PDF 125, 65)
     cx, cy = vt._pdf_to_canvas(125.0, 65.0)
@@ -178,8 +186,8 @@ def test_double_click_freetext_opens_editor_with_existing_text(qapp, pdf_with_fr
 
 
 def test_commit_tb_editor_saves_multiline_text(qapp, pdf_with_freetext):
-    import fitz
     from PySide6.QtWidgets import QApplication
+
     vt = _open_and_render(qapp, pdf_with_freetext)
     cx, cy = vt._pdf_to_canvas(125.0, 65.0)
     vt._on_double_click(cx, cy)
@@ -204,6 +212,7 @@ def test_commit_tb_editor_saves_multiline_text(qapp, pdf_with_freetext):
 def test_commit_empty_new_textbox_discards(qapp, empty_pdf):
     from PySide6.QtWidgets import QApplication
     from view_tool import Tool
+
     vt = _open_and_render(qapp, empty_pdf)
     vt._set_tool(Tool.TEXT_BOX)
     cx, cy = vt._pdf_to_canvas(100.0, 100.0)
@@ -221,8 +230,11 @@ def test_commit_empty_new_textbox_discards(qapp, empty_pdf):
     vt.cleanup()
 
 
-def test_commit_existing_textbox_with_empty_text_deletes_annotation(qapp, pdf_with_freetext):
+def test_commit_existing_textbox_with_empty_text_deletes_annotation(
+    qapp, pdf_with_freetext
+):
     from PySide6.QtWidgets import QApplication
+
     vt = _open_and_render(qapp, pdf_with_freetext)
     page = vt.doc[0]
     assert len(list(page.annots())) == 1

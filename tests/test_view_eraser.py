@@ -6,6 +6,7 @@ import pytest
 
 def _get_or_create_app():
     from PySide6.QtWidgets import QApplication
+
     return QApplication.instance() or QApplication(sys.argv)
 
 
@@ -18,6 +19,7 @@ def qapp():
 def pdf_with_rect_annot(tmp_path):
     """PDF with a single rect annotation at a known position."""
     import fitz
+
     doc = fitz.open()
     page = doc.new_page(width=200, height=200)
     annot = page.add_rect_annot(fitz.Rect(50, 50, 100, 100))
@@ -31,6 +33,7 @@ def pdf_with_rect_annot(tmp_path):
 def _open_and_render(qapp, pdf_path):
     from view_tool import ViewTool
     from PySide6.QtWidgets import QApplication
+
     vt = ViewTool()
     vt.show()
     vt.open_file(pdf_path)
@@ -41,6 +44,7 @@ def _open_and_render(qapp, pdf_path):
 
 def test_eraser_click_deletes_annotation(qapp, pdf_with_rect_annot):
     from view_tool import Tool
+
     vt = _open_and_render(qapp, pdf_with_rect_annot)
     page = vt.doc[0]
     assert len(list(page.annots())) == 1
@@ -58,6 +62,7 @@ def test_eraser_click_deletes_annotation(qapp, pdf_with_rect_annot):
 
 def test_eraser_click_empty_area_does_nothing(qapp, pdf_with_rect_annot):
     from view_tool import Tool
+
     vt = _open_and_render(qapp, pdf_with_rect_annot)
     page = vt.doc[0]
     assert len(list(page.annots())) == 1
@@ -76,6 +81,7 @@ def test_eraser_click_empty_area_does_nothing(qapp, pdf_with_rect_annot):
 def pdf_with_two_annots(tmp_path):
     """PDF with two rect annotations at known non-overlapping positions."""
     import fitz
+
     doc = fitz.open()
     page = doc.new_page(width=400, height=200)
     a1 = page.add_rect_annot(fitz.Rect(10, 10, 60, 60))
@@ -91,6 +97,7 @@ def pdf_with_two_annots(tmp_path):
 def test_eraser_drag_deletes_swept_annotations(qapp, pdf_with_two_annots):
     from view_tool import Tool
     from PySide6.QtWidgets import QApplication
+
     vt = _open_and_render(qapp, pdf_with_two_annots)
     page = vt.doc[0]
     assert len(list(page.annots())) == 2
