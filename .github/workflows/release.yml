@@ -80,8 +80,9 @@ jobs:
       - name: Install librsvg (for icon conversion)
         run: brew install librsvg
 
-      - name: Convert SVG → ICNS
+      - name: Convert SVG → ICNS + LOGO.png
         run: |
+          rsvg-convert -w 256 -h 256 LOGO.svg -o LOGO.png
           mkdir -p PDFree.iconset
           for size in 16 32 128 256 512; do
             rsvg-convert -w $size       -h $size       LOGO.svg -o PDFree.iconset/icon_${size}x${size}.png
@@ -159,6 +160,9 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Generate LOGO.png
+        run: python -c "import cairosvg; cairosvg.svg2png(url='LOGO.svg', write_to='LOGO.png', output_width=256, output_height=256)"
+
       - name: Build PDFree.exe
         run: pyinstaller PDFree.spec --noconfirm
 
@@ -219,6 +223,9 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+
+      - name: Generate LOGO.png
+        run: rsvg-convert -w 256 -h 256 LOGO.svg -o LOGO.png
 
       - name: Build onedir bundle
         run: pyinstaller PDFree-linux.spec --noconfirm
