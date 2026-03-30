@@ -33,8 +33,6 @@ from colors import (
     G900,
     BLUE_DIM,
     TEAL,
-    AMBER,
-    AMBER_BG,
 )
 
 
@@ -200,9 +198,9 @@ class StyledTable(QWidget):
     def populate_library(self, entries: list[dict]):
         self._entries = list(entries)
 
-        self._table.setColumnCount(6)
+        self._table.setColumnCount(5)
         self._table.setHorizontalHeaderLabels(
-            ["", "Name", "Date Modified", "Size", "★", ""]
+            ["", "Name", "Date Modified", "Size", ""]
         )
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -210,12 +208,10 @@ class StyledTable(QWidget):
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        hh.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         self._table.setColumnWidth(0, 40)
         self._table.setColumnWidth(2, 160)
         self._table.setColumnWidth(3, 100)
-        self._table.setColumnWidth(4, 48)
-        self._table.setColumnWidth(5, 40)
+        self._table.setColumnWidth(4, 40)
 
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
@@ -242,7 +238,6 @@ class StyledTable(QWidget):
             path = entry.get("path", "")
             name = entry.get("name", Path(path).name if path else "")
             size = entry.get("size", 0) or 0
-            fav = entry.get("favorited", False)
 
             # Col 0: checkbox
             chk = QTableWidgetItem()
@@ -278,50 +273,19 @@ class StyledTable(QWidget):
             size_item.setForeground(QColor(G600))
             self._table.setItem(i, 3, size_item)
 
-            # Col 4: star widget
-            star_btn = self._make_star_btn(path, fav)
-            star_wrap = QWidget()
-            star_wrap.setStyleSheet("background: transparent;")
-            star_lay = QHBoxLayout(star_wrap)
-            star_lay.setContentsMargins(0, 0, 0, 0)
-            star_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            star_lay.addWidget(star_btn)
-            self._table.setCellWidget(i, 4, star_wrap)
-
-            # Col 5: menu widget
-            menu_btn = self._make_menu_btn(path, star_btn)
+            # Col 4: menu widget
+            menu_btn = self._make_menu_btn(path)
             menu_wrap = QWidget()
             menu_wrap.setStyleSheet("background: transparent;")
             menu_lay = QHBoxLayout(menu_wrap)
             menu_lay.setContentsMargins(0, 0, 0, 0)
             menu_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
             menu_lay.addWidget(menu_btn)
-            self._table.setCellWidget(i, 5, menu_wrap)
+            self._table.setCellWidget(i, 4, menu_wrap)
 
         self._update_footer()
 
-    def _make_star_btn(self, path: str, fav: bool) -> QPushButton:
-        btn = QPushButton("★" if fav else "☆")
-        btn.setFixedSize(28, 28)
-        self._apply_star_style(btn, fav)
-        btn.clicked.connect(lambda: self._on_star_clicked(btn, path))
-        return btn
-
-    def _apply_star_style(self, btn: QPushButton, fav: bool):
-        btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; border: none;"
-            f" color: {AMBER if fav else G300}; font: 15px; }}"
-            f"QPushButton:hover {{ color: {AMBER}; background: {AMBER_BG};"
-            f" border-radius: 6px; }}"
-        )
-
-    def _on_star_clicked(self, btn: QPushButton, path: str):
-        new_fav = btn.text() != "★"
-        btn.setText("★" if new_fav else "☆")
-        self._apply_star_style(btn, new_fav)
-        self.toggle_fav.emit(path, new_fav)
-
-    def _make_menu_btn(self, path: str, star_btn: QPushButton) -> QPushButton:
+    def _make_menu_btn(self, path: str) -> QPushButton:
         btn = QPushButton("···")
         btn.setFixedSize(28, 28)
         btn.setStyleSheet(
@@ -330,10 +294,10 @@ class StyledTable(QWidget):
             f"QPushButton:hover {{ background: {G100}; border-radius: 6px;"
             f" color: {G600}; }}"
         )
-        btn.clicked.connect(lambda: self._show_context_menu(btn, path, star_btn))
+        btn.clicked.connect(lambda: self._show_context_menu(btn, path))
         return btn
 
-    def _show_context_menu(self, anchor: QPushButton, path: str, star_btn: QPushButton):
+    def _show_context_menu(self, anchor: QPushButton, path: str):
         menu = QMenu(self)
         menu.setStyleSheet(
             f"QMenu {{ background: {WHITE}; border: 1px solid {G200};"
@@ -346,13 +310,22 @@ class StyledTable(QWidget):
         )
         menu.addAction("Open", lambda: self.open_req.emit(path))
         menu.addAction("Show in Explorer", lambda: self._show_in_explorer(path))
-        is_fav = star_btn.text() == "★"
+        entry = next((e for e in self._entries if e.get("path") == path), {})
+        is_fav = entry.get("favorited", False)
         fav_txt = "Remove from Favorites" if is_fav else "Add to Favorites"
-        menu.addAction(fav_txt, lambda: self._on_star_clicked(star_btn, path))
+        menu.addAction(fav_txt, lambda: self._toggle_fav_from_menu(path, is_fav))
         menu.addSeparator()
         menu.addAction("Move to Trash", lambda: self.toggle_sel.emit(path, True))
         pos = anchor.mapToGlobal(anchor.rect().bottomLeft())
         menu.exec(pos)
+
+    def _toggle_fav_from_menu(self, path: str, was_fav: bool):
+        new_fav = not was_fav
+        for e in self._entries:
+            if e.get("path") == path:
+                e["favorited"] = new_fav
+                break
+        self.toggle_fav.emit(path, new_fav)
 
     def _show_in_explorer(self, path: str):
         p = str(Path(path))
@@ -381,7 +354,7 @@ class StyledTable(QWidget):
         self._update_footer()
 
     def _on_library_cell_double_clicked(self, row: int, col: int):
-        if col in (0, 4, 5):
+        if col in (0, 4):
             return
         if row < len(self._entries):
             self.open_req.emit(self._entries[row].get("path", ""))
