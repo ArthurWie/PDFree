@@ -163,3 +163,59 @@ def test_clicking_with_textbox_tool_opens_inline_editor(qapp, empty_pdf):
     assert vt._canvas._tb_editor.isVisible()
     assert vt._canvas._tb_editor.toPlainText() == ""
     vt.cleanup()
+
+
+def test_double_click_freetext_opens_editor_with_existing_text(qapp, pdf_with_freetext):
+    from PySide6.QtWidgets import QApplication
+    vt = _open_and_render(qapp, pdf_with_freetext)
+    # Double-click at annotation center (PDF 125, 65)
+    cx, cy = vt._pdf_to_canvas(125.0, 65.0)
+    vt._on_double_click(cx, cy)
+    QApplication.processEvents()
+    assert vt._canvas._tb_editor.isVisible()
+    assert vt._canvas._tb_editor.toPlainText() == "Hello"
+    vt.cleanup()
+
+
+def test_commit_tb_editor_saves_multiline_text(qapp, pdf_with_freetext):
+    import fitz
+    from PySide6.QtWidgets import QApplication
+    vt = _open_and_render(qapp, pdf_with_freetext)
+    cx, cy = vt._pdf_to_canvas(125.0, 65.0)
+    vt._on_double_click(cx, cy)
+    QApplication.processEvents()
+
+    editor = vt._canvas._tb_editor
+    editor.setPlainText("Line one\nLine two")
+    vt._commit_tb_editor()
+    QApplication.processEvents()
+    QApplication.processEvents()
+
+    assert not editor.isVisible()
+    page = vt.doc[0]
+    annots = list(page.annots())
+    assert len(annots) == 1
+    content = annots[0].info.get("content", "")
+    assert "Line one" in content
+    assert "Line two" in content
+    vt.cleanup()
+
+
+def test_commit_empty_new_textbox_discards(qapp, empty_pdf):
+    from PySide6.QtWidgets import QApplication
+    from view_tool import Tool
+    vt = _open_and_render(qapp, empty_pdf)
+    vt._set_tool(Tool.TEXT_BOX)
+    cx, cy = vt._pdf_to_canvas(100.0, 100.0)
+    vt._on_mouse_down(cx, cy)
+    QApplication.processEvents()
+
+    # Commit with empty text
+    vt._canvas._tb_editor.setPlainText("")
+    vt._commit_tb_editor()
+    QApplication.processEvents()
+    QApplication.processEvents()
+
+    page = vt.doc[0]
+    assert len(list(page.annots())) == 0
+    vt.cleanup()

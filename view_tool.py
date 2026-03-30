@@ -528,6 +528,7 @@ class PDFCanvas(QWidget):
         self._tb_editor = _InlineTextEditor(self)
         self._tb_editing_annot = None
         self._tb_editor_pdf_origin = None
+        self._tb_committing = False
         self._tb_editor.committed.connect(self._vt._commit_tb_editor)
 
     def set_pixmap(self, pm: QPixmap, pm2: QPixmap | None = None):
@@ -4272,7 +4273,7 @@ class ViewTool(QWidget):
             if annot.rect.contains(click_pt):
                 atype = annot.type[0]
                 if atype == fitz.PDF_ANNOT_FREE_TEXT:
-                    self._open_textbox_dialog(px, py, existing_annot=annot)
+                    self._open_tb_editor(px, py, existing_annot=annot)
                     return
                 elif atype == fitz.PDF_ANNOT_TEXT:
                     self._edit_sticky(annot)
@@ -4340,7 +4341,7 @@ class ViewTool(QWidget):
             old_text = ""
 
         editor.setFixedSize(w, h)
-        canvas._tb_editing_annot = existing_annot
+        canvas._tb_editing_annot = fitz.Rect(existing_annot.rect) if existing_annot is not None else None
         canvas._tb_editor_pdf_origin = (pdf_x, pdf_y)
         editor.setPlainText(old_text)
         editor.show()
@@ -4348,7 +4349,67 @@ class ViewTool(QWidget):
         editor.setFocus()
 
     def _commit_tb_editor(self):
-        self._canvas._tb_editor.hide()
+        canvas = self._canvas
+        if canvas._tb_committing:
+            return
+        editor = canvas._tb_editor
+        if not editor.isVisible():
+            return
+        canvas._tb_committing = True
+        text = editor.toPlainText()
+        existing_annot = canvas._tb_editing_annot
+        pdf_x, pdf_y = canvas._tb_editor_pdf_origin or (0.0, 0.0)
+        canvas._tb_editing_annot = None
+        canvas._tb_editor_pdf_origin = None
+        editor.hide()
+        canvas._tb_committing = False
+
+        if not text and existing_annot is None:
+            return
+
+        if not self.doc:
+            return
+
+        self._push_undo()
+        page = self.doc[self.current_page]
+        _, _, fitz_rgb = self._annot_color
+        fontsize = max(8, self._stroke_width * 3)
+
+        if existing_annot is not None:
+            old_rect = existing_annot
+            annot_to_delete = next(
+                (a for a in page.annots() if fitz.Rect(a.rect) == old_rect),
+                None,
+            )
+            if annot_to_delete is not None:
+                page.delete_annot(annot_to_delete)
+            if text:
+                lines = text.split("\n")
+                width = max(old_rect.width, max(len(l) for l in lines) * fontsize * 0.6)
+                height = max(old_rect.height, len(lines) * fontsize * 1.4 + fontsize)
+                rect = fitz.Rect(
+                    old_rect.x0, old_rect.y0,
+                    old_rect.x0 + width, old_rect.y0 + height,
+                )
+                annot = page.add_freetext_annot(
+                    rect, text, fontsize=fontsize,
+                    text_color=fitz_rgb, fontname="helv", fill_color=None,
+                )
+                annot.update()
+        else:
+            if text:
+                lines = text.split("\n")
+                width = max(100, max(len(l) for l in lines) * fontsize * 0.6)
+                height = len(lines) * fontsize * 1.4 + fontsize
+                rect = fitz.Rect(pdf_x, pdf_y, pdf_x + width, pdf_y + height)
+                annot = page.add_freetext_annot(
+                    rect, text, fontsize=fontsize,
+                    text_color=fitz_rgb, fontname="helv", fill_color=None,
+                )
+                annot.update()
+
+        self._modified = True
+        self._show_page(self.current_page)
 
     def _open_sticky_dialog(self, pdf_x, pdf_y):
         text, ok = QInputDialog.getText(self, "Add Sticky Note", "Enter note text:")
