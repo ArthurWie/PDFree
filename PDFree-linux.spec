@@ -11,6 +11,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('LOGO.svg', '.'),
+        ('LOGO.png', '.'),
     ],
     hiddenimports=[
         'pdfplumber',

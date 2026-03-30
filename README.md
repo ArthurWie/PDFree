@@ -171,6 +171,6 @@ version.py               # App version and GitHub repo constants
 
 ## License
 
-[MIT](LICENSE)
+[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)
 
-> **Note on PyMuPDF:** PDFree uses PyMuPDF (fitz), which is licensed under the GNU AGPL v3. Commercial distribution of software that links PyMuPDF requires an [Artifex commercial license](https://mupdf.com/licensing/). See [NOTICE](NOTICE) for full third-party license details.
+PDFree uses PyMuPDF (fitz), which is AGPL-3.0 licensed. The project license mirrors this to ensure compliance. Commercial distribution requires an [Artifex commercial license](https://mupdf.com/licensing/). See [NOTICE](NOTICE) for full third-party license details.

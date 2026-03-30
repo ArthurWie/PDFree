@@ -10,6 +10,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('LOGO.svg', '.'),
+        ('LOGO.png', '.'),
         ('translations', 'translations'),
     ],
     hiddenimports=[
