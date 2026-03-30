@@ -11,6 +11,7 @@ and write the PDF NumberTree.
 import logging
 from pathlib import Path
 from utils import assert_file_writable, backup_original
+from styled_table import StyledTable
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -25,10 +26,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QComboBox,
     QSpinBox,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QAbstractItemView,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -527,25 +524,7 @@ class PageLabelsTool(QWidget):
         v.addWidget(toolbar)
 
         # Table
-        self._table = QTableWidget()
-        self._table.setColumnCount(2)
-        self._table.setHorizontalHeaderLabels(["Physical Page", "Label"])
-        self._table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setAlternatingRowColors(True)
-        self._table.verticalHeader().hide()
-        self._table.setStyleSheet(
-            f"QTableWidget {{ border: none; background: {WHITE}; gridline-color: {G100}; }}"
-            f"QTableWidget::item {{ padding: 0 8px; color: {G900}; }}"
-            f"QHeaderView::section {{ background: {G100}; color: {G700}; font: bold 12px;"
-            f" border: none; border-bottom: 1px solid {G200}; padding: 6px 8px; }}"
-        )
+        self._table = StyledTable()
         v.addWidget(self._table, 1)
         return right
 
@@ -635,14 +614,7 @@ class PageLabelsTool(QWidget):
             return
         ranges = self._get_ranges()
         labels = compute_labels(ranges, self._page_count)
-
-        self._table.setRowCount(self._page_count)
-        for i, label in enumerate(labels):
-            phys_item = QTableWidgetItem(str(i + 1))
-            phys_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            label_item = QTableWidgetItem(label)
-            self._table.setItem(i, 0, phys_item)
-            self._table.setItem(i, 1, label_item)
+        self._table.populate(list(enumerate(labels, 1)))
 
     # -----------------------------------------------------------------------
     # Save
