@@ -37,3 +37,22 @@ Untitled
 dist/
 build/
 *.egg-info/
+
+# pip shell artifacts (e.g. pip install package>=X.X mistyped in shell)
+=*
+
+# Dev session artefacts
+Screenshot*.png
+docs/superpowers/
+docs/comparison-stirling.md
+pdf-viewer-tech-stack.md
+DESIGN.md
+
+# Test output files
+*.coverage
+coverage.json
+pytest_out.txt
+pytest_result.txt
+pytest_stderr.txt
+test_output.txt
+full_test_output.txt
