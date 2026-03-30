@@ -69,3 +69,66 @@ def test_tb_handle_hidden_when_not_hovering(qapp, pdf_with_freetext):
     QApplication.processEvents()
     assert not vt._canvas._tb_handle.isVisible()
     vt.cleanup()
+
+
+def test_drag_handle_moves_freetext_annotation(qapp, pdf_with_freetext):
+    """Verify that releasing the drag handle at a new position updates the PDF annotation.
+
+    mapTo() is unreliable in headless Qt tests (no real window), so we skip the
+    full event-driven drag and instead directly prime the handle's internal state
+    (as press/move would have set it), then call mouseReleaseEvent with a minimal
+    synthetic event. This tests the rect-update logic in mouseReleaseEvent, which
+    is the non-trivial part of the drag implementation.
+    """
+    import fitz
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    vt = _open_and_render(qapp, pdf_with_freetext)
+
+    # Capture orig rect as a tuple right after open. We must not hold the
+    # Annot object — PyMuPDF invalidates it once the page/annots iterator
+    # goes out of scope, causing a segfault on .rect access.
+    page = vt.doc[0]
+    annot = next(page.annots())
+    orig_rect = fitz.Rect(annot.rect)
+    del annot
+
+    # Hover to show handle and populate _tb_hover_annot
+    cx, cy = vt._pdf_to_canvas(125.0, 65.0)
+    vt._on_mouse_move(cx, cy)
+    QApplication.processEvents()
+
+    handle = vt._canvas._tb_handle
+    assert handle.isVisible()
+
+    # Prime the handle state as mousePressEvent would have done, bypassing
+    # mapTo() which returns (0,0) in a headless environment.
+    handle._drag_active = True
+    handle._annot_orig_rect = fitz.Rect(orig_rect)
+
+    # Move the handle widget 30 canvas pixels to the right, as mouseMoveEvent
+    # would have done via self.move().
+    orig_hx = handle.x()
+    orig_hy = handle.y()
+    handle.move(orig_hx + 30, orig_hy)
+
+    # Synthesise a release event (button value is what matters for the guard).
+    release_event = QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease,
+        QPoint(5, 5).toPointF(),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    handle.mouseReleaseEvent(release_event)
+    QApplication.processEvents()
+    QApplication.processEvents()
+
+    new_page = vt.doc[0]
+    new_annot = next(new_page.annots())
+    new_rect = fitz.Rect(new_annot.rect)
+    del new_annot
+    assert new_rect.x0 != orig_rect.x0, "Annotation x0 should have moved"
+    vt.cleanup()
