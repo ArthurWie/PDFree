@@ -190,7 +190,7 @@ def test_library_column_count(app, tmp_path):
     from styled_table import StyledTable
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
-    assert t._table.columnCount() == 6
+    assert t._table.columnCount() == 5
 
 
 def test_library_row_count(app, tmp_path):
@@ -221,23 +221,12 @@ def test_library_size_formatted(app, tmp_path):
     assert t._table.item(0, 3).text() == "1.5 KB"
 
 
-def test_library_star_widget_present(app, tmp_path):
-    from styled_table import StyledTable
-    from PySide6.QtWidgets import QPushButton
-    t = StyledTable()
-    t.populate_library(_sample_entries(tmp_path))
-    w = t._table.cellWidget(0, 4)
-    assert w is not None
-    btn = w.findChild(QPushButton)
-    assert btn is not None
-
-
 def test_library_menu_widget_present(app, tmp_path):
     from styled_table import StyledTable
     from PySide6.QtWidgets import QPushButton
     t = StyledTable()
     t.populate_library(_sample_entries(tmp_path))
-    w = t._table.cellWidget(0, 5)
+    w = t._table.cellWidget(0, 4)
     assert w is not None
     btn = w.findChild(QPushButton)
     assert btn is not None
@@ -265,13 +254,12 @@ def test_toggle_sel_signal_emitted(app, tmp_path):
 
 def test_toggle_fav_signal_emitted(app, tmp_path):
     from styled_table import StyledTable
-    from PySide6.QtWidgets import QPushButton
     received = []
     t = StyledTable()
-    t.populate_library(_sample_entries(tmp_path))
+    entries = _sample_entries(tmp_path)
+    t.populate_library(entries)
     t.toggle_fav.connect(lambda path, fav: received.append((path, fav)))
-    w = t._table.cellWidget(0, 4)
-    btn = w.findChild(QPushButton)
-    btn.click()
+    # favorites are now toggled via the menu action, not a dedicated column button
+    t._toggle_fav_from_menu(entries[0]["path"], False)
     assert len(received) == 1
     assert received[0][1] is True  # was False, now True
