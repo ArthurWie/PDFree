@@ -2877,6 +2877,8 @@ class ViewTool(QWidget):
             Tool.MEASURE: Qt.CursorShape.CrossCursor,
         }
         self._canvas.setCursor(QCursor(cursors.get(tool, Qt.CursorShape.ArrowCursor)))
+        self._canvas._tb_handle.hide()
+        self._canvas._tb_hover_annot = None
 
     def _set_color(self, idx: int):
         self._annot_color_idx = idx
@@ -3415,6 +3417,8 @@ class ViewTool(QWidget):
     # ==================================================================
 
     def _show_page(self, idx: int):
+        self._canvas._tb_hover_annot = None
+        self._canvas._tb_handle.hide()
         if self._continuous_pane is not None:
             self._continuous_pane.scroll_to_page(idx)
             self._page_entry.setText(str(idx + 1))
@@ -3987,12 +3991,14 @@ class ViewTool(QWidget):
 
         # EXCERTER rubber-band — independent update
         if self._tool == Tool.EXCERTER:
+            self._canvas._tb_handle.hide()
             if self._rb_start is not None:
                 self._rb_current = (cx, cy)
                 self._canvas.update()
             return
 
         if self._tool == Tool.MEASURE:
+            self._canvas._tb_handle.hide()
             if self._measure_start is not None:
                 self._measure_end = (cx, cy)
                 self._compute_measure_label()
