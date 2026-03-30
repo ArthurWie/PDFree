@@ -109,4 +109,5 @@ def test_eraser_drag_deletes_swept_annotations(qapp, pdf_with_two_annots):
 
     page = vt.doc[0]
     assert len(list(page.annots())) == 0
+    assert vt._modified
     vt.cleanup()

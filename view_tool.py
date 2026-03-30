@@ -3896,7 +3896,7 @@ class ViewTool(QWidget):
         elif self._tool == Tool.ERASER:
             click_pt = fitz.Point(px, py)
             page = self.doc[self.current_page]
-            for annot in page.annots():
+            for annot in list(page.annots()):
                 if annot.rect.contains(click_pt):
                     self._push_undo()
                     page.delete_annot(annot)
@@ -3961,13 +3961,17 @@ class ViewTool(QWidget):
         elif self._tool == Tool.ERASER:
             click_pt = fitz.Point(px, py)
             page = self.doc[self.current_page]
+            deleted = False
             for annot in list(page.annots()):
                 if annot.rect.contains(click_pt):
-                    self._push_undo()
+                    if not deleted:
+                        self._push_undo()
                     page.delete_annot(annot)
-                    self._modified = True
-                    self._show_page(self.current_page)
+                    deleted = True
                     break
+            if deleted:
+                self._modified = True
+                self._show_page(self.current_page)
 
     def _on_mouse_up(self, cx: float, cy: float):
         # EXCERTER uses its own rubber-band state — handle before the _drag_start guard
