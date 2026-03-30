@@ -1117,7 +1117,7 @@ class PDFreeApp(QMainWindow):
 
         # Logo header
         logo_wrap = QFrame()
-        logo_wrap.setStyleSheet(f"QFrame {{ background: transparent; border: none; }}")
+        logo_wrap.setStyleSheet("QFrame { background: transparent; border: none; }")
         lw_lay = QHBoxLayout(logo_wrap)
         lw_lay.setContentsMargins(16, 16, 16, 16)
         lw_lay.setSpacing(0)

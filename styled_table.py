@@ -24,7 +24,6 @@ from colors import (
     WHITE,
     G100,
     G200,
-    G300,
     G400,
     G500,
     G600,
