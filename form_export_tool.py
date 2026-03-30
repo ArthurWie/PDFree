@@ -44,6 +44,7 @@ from colors import (
     BLUE_MED,
 )
 from icons import svg_pixmap
+from widgets import card_wrap
 
 try:
     import fitz
@@ -321,20 +322,6 @@ class FormExportTool(QWidget):
             2, QHeaderView.ResizeMode.ResizeToContents
         )
         self._table.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self._table.setStyleSheet(f"""
-            QTreeWidget {{
-                background: {WHITE}; border: none; font: 13px;
-                alternate-background-color: {G100};
-            }}
-            QTreeWidget::item {{ padding: 4px 8px; }}
-            QTreeWidget::item:selected {{ background: #DBEAFE; color: {G900}; }}
-            QHeaderView::section {{
-                background: {G100}; color: {G700}; font: bold 11px;
-                padding: 6px 8px; border: none;
-                border-bottom: 1px solid {G200};
-            }}
-        """)
-
         placeholder = QWidget()
         placeholder.setStyleSheet(f"background: {G100};")
         pl = QVBoxLayout(placeholder)
@@ -348,9 +335,10 @@ class FormExportTool(QWidget):
         )
         pl.addWidget(self._placeholder_lbl)
 
-        self._table.setVisible(False)
+        self._table_card = card_wrap(self._table)
+        self._table_card.setVisible(False)
         v.addWidget(placeholder, 1)
-        v.addWidget(self._table, 1)
+        v.addWidget(self._table_card, 1)
         self._placeholder_widget = placeholder
 
         return right
@@ -415,7 +403,7 @@ class FormExportTool(QWidget):
             )
             item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
             self._table.addTopLevelItem(item)
-        self._table.setVisible(True)
+        self._table_card.setVisible(True)
         self._placeholder_widget.setVisible(False)
 
     # ------------------------------------------------------------------
