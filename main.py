@@ -1034,7 +1034,7 @@ class PDFreeApp(QMainWindow):
         bar = QFrame()
         bar.setFixedHeight(64)
         bar.setStyleSheet(
-            f"QFrame {{ background: {colors.WHITE}; border-bottom: 1px solid {colors.HOME_BORDER}; }}"
+            f"QFrame {{ background: {colors.WHITE}; border: none; }}"
         )
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(32, 0, 32, 0)
@@ -1044,7 +1044,7 @@ class PDFreeApp(QMainWindow):
         search_frame = QFrame()
         search_frame.setFixedHeight(42)
         search_frame.setStyleSheet(
-            f"QFrame {{ background: {colors.HOME_SEARCH_BG}; border: 1px solid {colors.HOME_BORDER}; border-radius: 4px; }}"
+            f"QFrame {{ background: {colors.HOME_SEARCH_BG}; border: 1.5px solid {colors.HOME_BORDER}; border-radius: 8px; }}"
         )
         search_frame.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -1109,7 +1109,7 @@ class PDFreeApp(QMainWindow):
         sidebar = QFrame()
         sidebar.setFixedWidth(256)
         sidebar.setStyleSheet(
-            f"QFrame {{ background: {colors.SIDEBAR_BG}; border-right: 1px solid {colors.HOME_BORDER}; }}"
+            f"QFrame {{ background: {colors.SIDEBAR_BG}; border: none; }}"
         )
         sidebar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
@@ -1120,7 +1120,7 @@ class PDFreeApp(QMainWindow):
         # Logo header
         logo_wrap = QFrame()
         logo_wrap.setStyleSheet(
-            f"QFrame {{ background: transparent; border-bottom: 1px solid {colors.HOME_BORDER}; border-right: none; }}"
+            f"QFrame {{ background: transparent; border: none; }}"
         )
         lw_lay = QHBoxLayout(logo_wrap)
         lw_lay.setContentsMargins(16, 16, 16, 16)
@@ -2486,7 +2486,7 @@ class PDFreeApp(QMainWindow):
         search_frame = QFrame()
         search_frame.setFixedHeight(36)
         search_frame.setStyleSheet(
-            f"QFrame {{ background: {colors.HOME_SEARCH_BG}; border: 1px solid {colors.G200}; border-radius: 4px; }}"
+            f"QFrame {{ background: {colors.HOME_SEARCH_BG}; border: 1.5px solid {colors.G200}; border-radius: 8px; }}"
         )
         sf_lay = QHBoxLayout(search_frame)
         sf_lay.setContentsMargins(10, 0, 10, 0)

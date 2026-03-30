@@ -851,7 +851,7 @@ class SplitTool(QWidget):
         self._search_input.setStyleSheet(f"""
             QLineEdit {{
                 background: {WHITE}; color: {G900};
-                border: 1px solid {G300}; border-radius: 6px;
+                border: 1.5px solid {G300}; border-radius: 8px;
                 font: 13px 'Segoe UI'; padding: 0 10px;
             }}
             QLineEdit:focus {{ border-color: {BLUE}; }}

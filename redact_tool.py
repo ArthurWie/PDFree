@@ -417,7 +417,7 @@ class RedactTool(QWidget):
         self._search_entry.setPlaceholderText("Search text or pattern…")
         self._search_entry.setFixedHeight(34)
         self._search_entry.setStyleSheet(
-            f"border: 1px solid {G200}; border-radius: 6px; padding: 0 8px;"
+            f"border: 1.5px solid {G200}; border-radius: 8px; padding: 0 8px;"
             f" font: 13px; color: {G900}; background: {WHITE};"
         )
         lay.addWidget(self._search_entry)
