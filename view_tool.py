@@ -401,6 +401,81 @@ class SignatureDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Drag Handle Overlay
+# ---------------------------------------------------------------------------
+
+
+class _DragHandle(QLabel):
+    """Drag handle overlay shown when hovering over a FREE_TEXT annotation."""
+
+    def __init__(self, canvas):
+        super().__init__("⠿ drag", canvas)
+        self._canvas = canvas
+        self._drag_active = False
+        self._drag_origin = None      # (canvas_x, canvas_y) at press
+        self._annot_orig_rect = None  # fitz.Rect at press
+        self.setStyleSheet(
+            "QLabel { background: #1e3a5f; color: #93c5fd; border-radius: 3px; "
+            "padding: 1px 6px; font-size: 11px; }"
+        )
+        self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+        self.setFixedHeight(18)
+        self.hide()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            vt = self._canvas._vt
+            if self._canvas._tb_hover_annot is not None:
+                vt._push_undo()
+            self._drag_active = True
+            pos = self.mapTo(self._canvas, event.position().toPoint())
+            self._drag_origin = (pos.x(), pos.y())
+            annot = self._canvas._tb_hover_annot
+            if annot is not None:
+                self._annot_orig_rect = fitz.Rect(annot.rect)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_active and self._drag_origin is not None:
+            pos = self.mapTo(self._canvas, event.position().toPoint())
+            dx_c = pos.x() - self._drag_origin[0]
+            dy_c = pos.y() - self._drag_origin[1]
+            self.move(self.x() + int(dx_c), self.y() + int(dy_c))
+            self._drag_origin = (pos.x(), pos.y())
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_active and self._annot_orig_rect is not None:
+            vt = self._canvas._vt
+            annot = self._canvas._tb_hover_annot
+            if annot is not None and vt.doc:
+                orig_cx, orig_cy = vt._pdf_to_canvas(
+                    self._annot_orig_rect.x0, self._annot_orig_rect.y0
+                )
+                new_cx = self.x()
+                new_cy = self.y()
+                dx_c = new_cx - orig_cx
+                dy_c = new_cy - orig_cy
+                orig_px, orig_py = vt._canvas_to_pdf(0.0, 0.0)
+                end_px, end_py = vt._canvas_to_pdf(dx_c, dy_c)
+                dpx = end_px - orig_px
+                dpy = end_py - orig_py
+                r = self._annot_orig_rect
+                new_rect = fitz.Rect(
+                    r.x0 + dpx, r.y0 + dpy,
+                    r.x1 + dpx, r.y1 + dpy,
+                )
+                annot.set_rect(new_rect)
+                annot.update()
+                vt._modified = True
+                vt._show_page(vt.current_page)
+        self._drag_active = False
+        self._drag_origin = None
+        self._annot_orig_rect = None
+        super().mouseReleaseEvent(event)
+
+
+# ---------------------------------------------------------------------------
 # PDF Canvas Widget
 # ---------------------------------------------------------------------------
 
@@ -418,6 +493,8 @@ class PDFCanvas(QWidget):
         self._pixmap2: QPixmap | None = None
         self._pending_link = None
         self._link_press_pos = None
+        self._tb_handle = _DragHandle(self)
+        self._tb_hover_annot = None
 
     def set_pixmap(self, pm: QPixmap, pm2: QPixmap | None = None):
         self._pixmap = pm
@@ -3922,6 +3999,8 @@ class ViewTool(QWidget):
                 self._canvas.update()
             return
 
+        self._update_tb_handle(cx, cy)
+
         if self._drag_start is None:
             return
         self._drag_current = (cx, cy)
@@ -4179,6 +4258,28 @@ class ViewTool(QWidget):
     # ==================================================================
     # TEXT BOX & STICKY NOTE
     # ==================================================================
+
+    def _update_tb_handle(self, cx: float, cy: float):
+        """Show or hide the text-box drag handle based on hover position."""
+        if not self.doc:
+            self._canvas._tb_handle.hide()
+            return
+        px, py = self._canvas_to_pdf(cx, cy)
+        hover_pt = fitz.Point(px, py)
+        page = self.doc[self.current_page]
+        for annot in page.annots():
+            if annot.type[0] == fitz.PDF_ANNOT_FREE_TEXT:
+                if annot.rect.contains(hover_pt):
+                    self._canvas._tb_hover_annot = annot
+                    hx, hy = self._pdf_to_canvas(annot.rect.x0, annot.rect.y0)
+                    handle = self._canvas._tb_handle
+                    handle.move(int(hx), int(hy))
+                    handle.adjustSize()
+                    handle.show()
+                    handle.raise_()
+                    return
+        self._canvas._tb_hover_annot = None
+        self._canvas._tb_handle.hide()
 
     def _open_textbox_dialog(self, pdf_x, pdf_y, existing_annot=None):
         old_text = ""
