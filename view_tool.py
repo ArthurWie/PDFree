@@ -157,6 +157,7 @@ class Tool(Enum):
     LINE = "line"
     ARROW = "arrow"
     SIGN = "sign"
+    ERASER = "eraser"
     EXCERTER = "excerter"
     MEASURE = "measure"
 
@@ -175,6 +176,7 @@ TOOL_DEFS = [
     (Tool.LINE, "/", "Line", "L"),
     (Tool.ARROW, "\u2192", "Arrow", "A"),
     (Tool.SIGN, "\u2712", "Sign", ""),
+    (Tool.ERASER, "\u232b", "Eraser", "W"),
     (Tool.EXCERTER, "\u2702", "Excerter", "E"),
     (Tool.MEASURE, "\u25cf", "Measure", "M"),
 ]
@@ -756,6 +758,7 @@ class PDFCanvas(QWidget):
             Qt.Key.Key_O: Tool.CIRCLE,
             Qt.Key.Key_L: Tool.LINE,
             Qt.Key.Key_A: Tool.ARROW,
+            Qt.Key.Key_W: Tool.ERASER,
             Qt.Key.Key_E: Tool.EXCERTER,
             Qt.Key.Key_M: Tool.MEASURE,
         }
@@ -1960,8 +1963,8 @@ class ViewTool(QWidget):
         self._search_entry.setFixedSize(250, 30)
         self._search_entry.setPlaceholderText("Search\u2026")
         self._search_entry.setStyleSheet(
-            f"QLineEdit {{ background: {WHITE}; border: 1px solid {G300}; "
-            f"border-radius: 5px; color: {G900}; font: 12px 'Segoe UI'; padding: 0 6px; }}"
+            f"QLineEdit {{ background: {WHITE}; border: 1.5px solid {G300}; "
+            f"border-radius: 8px; color: {G900}; font: 12px 'Segoe UI'; padding: 0 6px; }}"
         )
         self._search_entry.returnPressed.connect(self._do_search)
         sb2.addWidget(self._search_entry)
@@ -2792,6 +2795,7 @@ class ViewTool(QWidget):
             Tool.LINE: Qt.CursorShape.CrossCursor,
             Tool.ARROW: Qt.CursorShape.CrossCursor,
             Tool.SIGN: Qt.CursorShape.CrossCursor,
+            Tool.ERASER: Qt.CursorShape.ForbiddenCursor,
             Tool.EXCERTER: Qt.CursorShape.CrossCursor,
             Tool.MEASURE: Qt.CursorShape.CrossCursor,
         }
