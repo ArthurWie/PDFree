@@ -401,6 +401,36 @@ class SignatureDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Inline Text Editor Overlay
+# ---------------------------------------------------------------------------
+
+
+class _InlineTextEditor(QTextEdit):
+    """Inline multiline editor overlay for FREE_TEXT annotations."""
+
+    committed = Signal()
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self._canvas = canvas
+        self.setStyleSheet(
+            "QTextEdit { background: #1e293b; color: #e5e7eb; border: 2px solid #3B82F6; "
+            "border-radius: 4px; font-family: 'Segoe UI'; font-size: 12px; padding: 4px; }"
+        )
+        self.hide()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.committed.emit()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.committed.emit()
+        else:
+            super().keyPressEvent(event)
+
+
+# ---------------------------------------------------------------------------
 # Drag Handle Overlay
 # ---------------------------------------------------------------------------
 
@@ -495,6 +525,10 @@ class PDFCanvas(QWidget):
         self._link_press_pos = None
         self._tb_handle = _DragHandle(self)
         self._tb_hover_annot = None
+        self._tb_editor = _InlineTextEditor(self)
+        self._tb_editing_annot = None
+        self._tb_editor_pdf_origin = None
+        self._tb_editor.committed.connect(self._vt._commit_tb_editor)
 
     def set_pixmap(self, pm: QPixmap, pm2: QPixmap | None = None):
         self._pixmap = pm
@@ -3971,7 +4005,7 @@ class ViewTool(QWidget):
         elif self._tool == Tool.SIGN:
             self._open_sign_dialog(cx, cy)
         elif self._tool == Tool.TEXT_BOX:
-            self._open_textbox_dialog(px, py)
+            self._open_tb_editor(px, py)
         elif self._tool == Tool.STICKY_NOTE:
             self._open_sticky_dialog(px, py)
         elif self._tool == Tool.ERASER:
@@ -4287,57 +4321,34 @@ class ViewTool(QWidget):
         self._canvas._tb_hover_annot = None
         self._canvas._tb_handle.hide()
 
-    def _open_textbox_dialog(self, pdf_x, pdf_y, existing_annot=None):
-        old_text = ""
-        if existing_annot:
+    def _open_tb_editor(self, pdf_x: float, pdf_y: float, existing_annot=None):
+        canvas = self._canvas
+        editor = canvas._tb_editor
+
+        if existing_annot is not None:
+            r = existing_annot.rect
+            x0c, y0c = self._pdf_to_canvas(r.x0, r.y0)
+            x1c, y1c = self._pdf_to_canvas(r.x1, r.y1)
+            w = max(100, int(x1c - x0c))
+            h = max(40, int(y1c - y0c))
+            editor.move(int(x0c), int(y0c))
             old_text = existing_annot.info.get("content", "")
-        title = "Edit Text Box" if existing_annot else "Add Text Box"
-        prompt = "Edit text box:" if existing_annot else "Enter text for the text box:"
-        text, ok = QInputDialog.getText(self, title, prompt, text=old_text)
-        if not ok:
-            return
-        if text == "" and not existing_annot:
-            return
-
-        self._push_undo()
-        page = self.doc[self.current_page]
-        _, hex_c, fitz_rgb = self._annot_color
-        fontsize = max(8, self._stroke_width * 3)
-
-        if existing_annot:
-            old_rect = existing_annot.rect
-            page.delete_annot(existing_annot)
-            if text:
-                width = max(old_rect.width, len(text) * fontsize * 0.6)
-                height = max(old_rect.height, fontsize * 2)
-                rect = fitz.Rect(
-                    old_rect.x0, old_rect.y0, old_rect.x0 + width, old_rect.y0 + height
-                )
-                annot = page.add_freetext_annot(
-                    rect,
-                    text,
-                    fontsize=fontsize,
-                    text_color=fitz_rgb,
-                    fontname="helv",
-                    fill_color=None,
-                )
-                annot.update()
         else:
-            width = max(100, len(text) * fontsize * 0.6)
-            height = fontsize * 2.5
-            rect = fitz.Rect(pdf_x, pdf_y, pdf_x + width, pdf_y + height)
-            annot = page.add_freetext_annot(
-                rect,
-                text,
-                fontsize=fontsize,
-                text_color=fitz_rgb,
-                fontname="helv",
-                fill_color=None,
-            )
-            annot.update()
+            x0c, y0c = self._pdf_to_canvas(pdf_x, pdf_y)
+            w, h = 200, 100
+            editor.move(int(x0c), int(y0c))
+            old_text = ""
 
-        self._modified = True
-        self._show_page(self.current_page)
+        editor.setFixedSize(w, h)
+        canvas._tb_editing_annot = existing_annot
+        canvas._tb_editor_pdf_origin = (pdf_x, pdf_y)
+        editor.setPlainText(old_text)
+        editor.show()
+        editor.raise_()
+        editor.setFocus()
+
+    def _commit_tb_editor(self):
+        self._canvas._tb_editor.hide()
 
     def _open_sticky_dialog(self, pdf_x, pdf_y):
         text, ok = QInputDialog.getText(self, "Add Sticky Note", "Enter note text:")

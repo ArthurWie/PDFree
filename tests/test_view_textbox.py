@@ -132,3 +132,34 @@ def test_drag_handle_moves_freetext_annotation(qapp, pdf_with_freetext):
     del new_annot
     assert new_rect.x0 != orig_rect.x0, "Annotation x0 should have moved"
     vt.cleanup()
+
+
+@pytest.fixture
+def empty_pdf(tmp_path):
+    import fitz
+    doc = fitz.open()
+    doc.new_page(width=400, height=400)
+    p = tmp_path / "empty.pdf"
+    doc.save(str(p))
+    doc.close()
+    return str(p)
+
+
+def test_tb_editor_exists_on_canvas(qapp, empty_pdf):
+    vt = _open_and_render(qapp, empty_pdf)
+    assert hasattr(vt._canvas, "_tb_editor")
+    vt.cleanup()
+
+
+def test_clicking_with_textbox_tool_opens_inline_editor(qapp, empty_pdf):
+    from view_tool import Tool
+    from PySide6.QtWidgets import QApplication
+    vt = _open_and_render(qapp, empty_pdf)
+    vt._set_tool(Tool.TEXT_BOX)
+    # Click on empty area (PDF coords 100, 100)
+    cx, cy = vt._pdf_to_canvas(100.0, 100.0)
+    vt._on_mouse_down(cx, cy)
+    QApplication.processEvents()
+    assert vt._canvas._tb_editor.isVisible()
+    assert vt._canvas._tb_editor.toPlainText() == ""
+    vt.cleanup()
