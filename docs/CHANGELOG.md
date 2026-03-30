@@ -4,7 +4,7 @@ All changes in reverse chronological order. Dates are YYYY-MM-DD.
 
 ---
 
-## [Unreleased]
+## [1.1.0] — 2026-03-31
 
 ### Added
 - Multi-document tab support: open multiple PDFs simultaneously in the viewer; each tab maintains independent zoom, rotation, page position, and undo stack
