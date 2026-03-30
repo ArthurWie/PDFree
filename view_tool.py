@@ -3893,6 +3893,16 @@ class ViewTool(QWidget):
             self._open_textbox_dialog(px, py)
         elif self._tool == Tool.STICKY_NOTE:
             self._open_sticky_dialog(px, py)
+        elif self._tool == Tool.ERASER:
+            click_pt = fitz.Point(px, py)
+            page = self.doc[self.current_page]
+            for annot in page.annots():
+                if annot.rect.contains(click_pt):
+                    self._push_undo()
+                    page.delete_annot(annot)
+                    self._modified = True
+                    self._show_page(self.current_page)
+                    break
 
     def _on_mouse_move(self, cx: float, cy: float):
         if not self.doc:
